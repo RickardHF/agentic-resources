@@ -1,3 +1,8 @@
+---
+name: task-skill
+description: This skill allows agents to read existing tasks and create new tasks.
+---
+
 # Task Skill
 
 ## When to Use
