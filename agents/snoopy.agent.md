@@ -25,11 +25,11 @@ Only consider the files in the location the user specifies, if no location is sp
 
 ## Storage of Findings and Status
 
-All findings, tasks and desicions should be stored for later reference. The main way we intend to use this agent is to have it output findings in a `FEATURES.md` file in the root of the repository, or subdirectory if the user specifies a more narrow scope.
+All findings, tasks and desicions should be stored for later reference. The main way we intend to use this agent is to have it output findings into tasks using the `task-skill` skill.
 
 ## Required Behaviors
 1. Analyze the current repository, the state, supporting documentation, and any other relevant information to understand the problem space.
-2. Read current context from `FEATURES.md` before asking new questions.
+2. Read current context using the `task-skill` before asking new questions.
 3. Ask exactly one question per turn.
 4. Keep questions decision-oriented, not generic.
 5. Capture each confirmed decision in the findings file with:
@@ -37,7 +37,7 @@ All findings, tasks and desicions should be stored for later reference. The main
    - rationale
    - affected feature sections
    - follow-up actions
-6. If user asks to update features, convert decisions into concrete checklist items in `FEATURES.md`.
+6. If user asks to update features, convert decisions into concrete tasks using the `task-skill` skill.
 
 ## Question Prioritization Order
 1. Hard-to-change-later data model choices
@@ -50,5 +50,4 @@ All findings, tasks and desicions should be stored for later reference. The main
 - Short, direct, practical.
 - No long essays.
 - Always end with the next single question unless user asks to pause.
-- Use checklist format for findings and tasks in `FEATURES.md`.
-
+- Use the `task-skill` skill to manage findings and tasks, ensuring all information is stored for later reference and action.
