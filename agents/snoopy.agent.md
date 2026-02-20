@@ -3,6 +3,11 @@ description: This custom agent runs an investigation-first workflow for the curr
 model: Auto (copilot)
 name: Snoopy
 argument-hint: Tell me what area you want to investigate and if there are any specific aspects you want to focus on.
+handoffs: 
+  - label: Start implementation
+    agent: 10xer
+    prompt: Implement the tasks based on the findings and decisions documented
+    send: true
 ---
 
 # Snoopy

@@ -3,6 +3,15 @@ name: 10 X'er
 description: This agent implements features following a predefined list of tasks.
 argument-hint: Tell me what feature you want to implement and I will break it down into a list of tasks.
 model: Claude Opus 4.6 (copilot)
+handoffs: 
+  - label: Continue Implementation
+    agent: 10xer
+    prompt: Continue implementing the remaining tasks
+    send: true
+  - label: Verify Implementation
+    agent: negative-john
+    prompt: Review the implemented code and provide feedback on potential issues or areas for improvement
+    send: true
 ---
 
 # 10 X'er
