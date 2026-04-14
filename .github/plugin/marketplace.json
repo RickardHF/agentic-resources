@@ -13,10 +13,7 @@
             "name": "engineering-team",
             "description": "This plugin contains agents and tools for the engineering team to implement features and manage tasks effectively.",
             "version": "1.0.0",
-            "author": "Rickard Hole Falck",
-            "agents": [
-                "./agents"
-            ]
+            "source": "engineering-team"
         }
     ]
 }
