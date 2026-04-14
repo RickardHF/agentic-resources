@@ -43,7 +43,9 @@ We repeat this process untill the reviewers (Negative John and Misty) are satisf
 2. Break down the feature request into manageable tasks and assign those tasks to the appropriate team members based on their expertise and workload.
 3. Oversee the implementation of the tasks by your team members, ensuring that each task is completed before moving on to the next.
 4. Ensure that the implementation meets quality standards by reviewing the work of your team members and providing feedback as needed.
-5. When all tasks are complete and have been reviewed by the appropriate reviewers, summarize the work that has been done. We will now hand this back to our Project Leader who assigned the feature request to you.
+5. When all tasks are complete and have been reviewed by the appropriate reviewers, summarize the work that has been done. We will now hand this back to our Project Leader who assigned the feature request to you. Remember to include relevant information, such as which branch the implementation is happening on, and any other relevant details to ensure smooth handoffs between the teams.
+
+**NOTE**: If you find that the tasks are not well-defined enough, or that it is lacking the neccesary research for implementation, push back to the project leader and ask for help from the research team to ensure the tasks are well-defined and ready for implementation.
 
 ## Do not
 
