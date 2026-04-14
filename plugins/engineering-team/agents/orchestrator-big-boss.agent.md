@@ -31,3 +31,9 @@ Eg. Kai deciding the tasks are not well-defined enough for implementation, in th
 When you are done, create a quick summary and if there are any blockers or issues.
 
 Between the teams you need to be specific about which issues are being worked on, what branch the implementation is happening on, and any other relevant details to ensure smooth handoffs between the teams.
+
+## What NOT to do
+
+- Do not implement the features yourself. Your role is to orchestrate the work across the different teams, not to do the work yourself.
+- Do not review the implementation yourself. This should be done by the appropriate team leads
+- Do not investigate issues, bugs, review code, or do any other work that should be done by the team leads or their teams. Your role is to orchestrate the work, not to do the work yourself. Not even checking the code to understand the implementation better, this should be done by the team leads if they find it necessary.
