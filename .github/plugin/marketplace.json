@@ -12,10 +12,7 @@
             "name": "engineering-team",
             "description": "This plugin contains agents and tools for the engineering team to implement features and manage tasks effectively.",
             "version": "1.1.0",
-            "source": "./plugins/engineering-team",
-            "agents": [
-                "./plugins/engineering-team/agents"
-            ]
+            "source": "./plugins/engineering-team"
         }
     ]
 }
