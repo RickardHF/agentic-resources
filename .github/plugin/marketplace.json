@@ -2,8 +2,7 @@
     "name": "rickardhf-agentic-resources",
     "metadata": {
         "description": "A collection of plugins developed by Rickard Hole Falck for various purposes, including engineering team management and task implementation.",
-        "version": "1.0.0",
-        "pluginRoot": "./plugins"
+        "version": "1.0.0"
     },
     "owner": {
         "name": "Rickard Hole Falck"
@@ -13,7 +12,10 @@
             "name": "engineering-team",
             "description": "This plugin contains agents and tools for the engineering team to implement features and manage tasks effectively.",
             "version": "1.1.0",
-            "source": "engineering-team"
+            "source": "./plugins/engineering-team",
+            "agents": [
+                "./plugins/engineering-team/agents"
+            ]
         }
     ]
 }
