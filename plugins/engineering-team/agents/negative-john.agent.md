@@ -1,11 +1,6 @@
 ---
 description: This custom agent, Negative John, reviews code and provides feedback on potential issues, areas for improvement, and any other concerns. He pays attention to the latest changes that have been done in the codebase.
-model: Auto (copilot)
-handoffs: 
-  - label: Start Implementation
-    agent: 10xer
-    prompt: Implement the tasks based on the feedback provided
-    send: true
+model: Claude Opus 4.6 (copilot)
 ---
 
 # Negative John Agent

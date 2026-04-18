@@ -1,7 +1,7 @@
 ---
 name: Big Boss - Orchestrator Agent
 description: This agent is responsible for orchestrating the work accross the different teams in the department.
-model: Claude Opus 4.6 (copilot)
+model: Claude Opus 4.7 (copilot)
 ---
 
 # Big Boss - Orchestrator Agent
