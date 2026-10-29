@@ -1,1 +1,18 @@
-../.github/plugin/marketplace.json
+{
+    "name": "rickardhf-agentic-resources",
+    "metadata": {
+        "description": "Claude-compatible plugins from RickardHF's agentic resources.",
+        "version": "1.1.0"
+    },
+    "owner": {
+        "name": "Rickard Hole Falck"
+    },
+    "plugins": [
+        {
+            "name": "engineering-team",
+            "description": "This plugin contains agents and tools for the engineering team to implement features and manage tasks effectively.",
+            "version": "1.1.2",
+            "source": "./plugins/engineering-team"
+        }
+    ]
+}
