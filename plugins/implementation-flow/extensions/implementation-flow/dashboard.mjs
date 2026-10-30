@@ -74,13 +74,13 @@ export function createDashboardCanvas(createCanvas, store, options) {
   };
   return {
     canvas: createCanvas({
-      id: "issue-delivery-runs",
-      displayName: "Issue delivery runs",
-      description: "Read-only issue-delivery run progress and local artifact inspection across sessions for this checkout.",
+      id: "implementation-flow-runs",
+      displayName: "Implementation flow runs",
+      description: "Read-only implementation-flow progress and local artifact inspection across sessions for this checkout.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
       actions: [{
         name: "list_runs",
-        description: "Read the recorded issue-delivery runs for this checkout.",
+        description: "Read the recorded implementation-flow runs for this checkout.",
         handler: () => store.listRuns(),
       }],
       open: async ({ instanceId }) => {
@@ -91,7 +91,7 @@ export function createDashboardCanvas(createCanvas, store, options) {
           });
           instances.set(instanceId, entry);
         }
-        return { title: "Issue delivery runs", url: (await instances.get(instanceId)).url };
+        return { title: "Implementation flow runs", url: (await instances.get(instanceId)).url };
       },
       onClose: ({ instanceId }) => close(instanceId),
     }),

@@ -16,7 +16,7 @@ export function startObserver(session, store, { intervalMs = 5_000, now = Date.n
   const report = (key, error) => {
     const message = error instanceof Error ? error.message : String(error);
     if (errors.get(key) !== message) {
-      void logError(session, `Issue delivery dashboard observation failed (${key}): ${message}`);
+      void logError(session, `Implementation flow dashboard observation failed (${key}): ${message}`);
     }
     errors.set(key, message);
   };
@@ -28,7 +28,7 @@ export function startObserver(session, store, { intervalMs = 5_000, now = Date.n
         pending.delete(runId);
         try {
           const detail = await session.workflow.getRunDetail(runId);
-          if (closed || detail.workflowName !== "issue-delivery") continue;
+          if (closed || detail.workflowName !== "implementation-flow") continue;
           if (detail.runId !== runId) throw new Error("Runtime returned a different run identity.");
           const previous = known.get(runId);
           if (previous && previous.revision > detail.revision) continue;
@@ -62,7 +62,7 @@ export function startObserver(session, store, { intervalMs = 5_000, now = Date.n
           const page = await session.workflow.listRuns({ limit: 200, ...(beforeSeq === undefined ? {} : { beforeSeq }) });
           if (closed) return;
           for (const run of page.runs) {
-            if (run.workflowName === "issue-delivery") enqueue(run.runId, run.revision, LIVE_STATUSES.has(run.status));
+            if (run.workflowName === "implementation-flow") enqueue(run.runId, run.revision, LIVE_STATUSES.has(run.status));
           }
           if (!page.omittedOlder) break;
           if (!Number.isFinite(page.oldestSeq) || beforeSeq !== undefined && page.oldestSeq >= beforeSeq) {

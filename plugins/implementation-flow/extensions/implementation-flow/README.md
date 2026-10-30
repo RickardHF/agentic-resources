@@ -1,15 +1,30 @@
-# Issue delivery dynamic workflow
+# Implementation flow dynamic workflow
 
-Registered name: `issue-delivery` (extension bundled by the `issue-delivery`
+Registered name: `implementation-flow` (extension bundled by the `implementation-flow`
 Copilot plugin; start a new session after installing or updating the plugin).
 
-Input:
+Input: either a GitHub issue URL:
 
 ```json
 {
   "issueUrl": "https://github.com/RickardHF/Autonomous-Developer-Workflows/issues/42"
 }
 ```
+
+Or a task title and description:
+
+```json
+{
+  "taskTitle": "Add CSV export",
+  "taskDescription": "Add CSV export for the current results, preserving their active filters and sort order."
+}
+```
+
+The two input modes are mutually exclusive. All supplied values must be nonempty
+strings; partial task input, mixed modes, and unknown fields are rejected before
+any commands or agents run. Issue input requires authenticated `gh` access and
+must identify an issue in the checked-out repository. Task input needs only Git,
+does not call `gh`, and does not create or modify any GitHub issue.
 
 Invoke with `run_dynamic_workflow` using this name and input. This definition is
 session-scoped, not a GitHub Actions workflow or an app-wide automation. Its source
@@ -22,8 +37,8 @@ until the run ends.
 
 1. A read-only planner captures acceptance criteria and an implementation plan.
 2. The sole implementation agent edits and validates the shared checkout.
-3. An issue-coverage reviewer checks actual behavior against the captured issue,
-   including any issue requirement missed by the plan.
+3. A requirement-coverage reviewer checks actual behavior against the captured
+   issue or task, including any original requirement missed by the plan.
 4. A separate static quality/security reviewer runs concurrently with stage 3,
    without seeing its findings.
 5. A synthesizer reads both reviews and recommends successful, unsuccessful, or
@@ -31,12 +46,20 @@ until the run ends.
    overriding missing reviews, unverified acceptance, failed checks, changed issue
    requirements, or unresolved blocking/high/critical findings.
 
-Agents receive paths to local issue, plan, implementation, and review artifacts,
+Agents receive paths to local requirement, plan, implementation, and review artifacts,
 not predecessor conversation history. The coordinator persists structured outputs,
 the tracked-file patch, a hashed new-file manifest, review fingerprint, and a final
-Markdown report under `<repo>/.git/issue-delivery/<run-id>/` (untracked, so the checkout stays clean)
+Markdown report under `<git-dir>/implementation-flow/<run-id>/` (outside the checkout's tracked files).
 
 New files are explicitly included in review instructions.
+
+Issue runs retain `issue.json`, `context.json`'s `issueRequirementDigest`, and
+`result.json`'s `issueUrl`. Task runs instead record `task.json` with `title` and
+`description`, `context.json`'s `taskRequirementDigest`, and `result.json`'s
+`taskTitle`. Both use the same plan, implementation, review and decision contracts,
+including the `requirements-review.json` artifact and agent labels for coverage.
+Task requirements are immutable captured input, so no remote freshness check is
+needed. Issue requirements/comments are still fetched again before synthesis.
 
 The workflow does not commit, push, create a PR, modify the GitHub issue, or
 automatically apply review fixes. Source changes remain unstaged on the original
@@ -45,7 +68,8 @@ output is recorded explicitly and any partial changes are still reviewed; succes
 is disallowed.
 
 Resume uses durable step outputs and agent memoization; completed agents are not
-restarted. A branch, HEAD, source, index, or protected-artifact change detected at
+restarted. Switching input modes or changing task requirements on resume is
+rejected; start a new run for a different task. A branch, HEAD, source, index, or protected-artifact change detected at
 a stage boundary stops the run instead of reviewing stale content. A crash after
 source edits but before the implementation checkpoint may require a new run after
 manual reconciliation. Do not clear journals or undo source changes blindly.
@@ -60,15 +84,15 @@ ordering, review concurrency, artifact handoffs, failure handling, recommendatio
 gates, and resume safety without changing the repository or running live agents:
 
 ```sh
-node --test plugins/issue-delivery/extensions/issue-delivery/workflow.test.mjs
+node --test plugins/implementation-flow/extensions/implementation-flow/workflow.test.mjs
 ```
 
 ## Run dashboard
 
-The same bundled extension also declares the **Issue delivery runs** canvas
-(`issue-delivery-runs`). After reloading the extension provider with
+The same bundled extension also declares the **Implementation flow runs** canvas
+(`implementation-flow-runs`). After reloading the extension provider with
 `extensions_reload` (or restarting the Copilot session), ask Copilot to
-**"Open the issue-delivery dashboard."** The canvas takes an empty input object.
+**"Open the implementation-flow dashboard."** The canvas takes an empty input object.
 It does not start a delivery run or require a clean checkout just to inspect
 existing artifacts.
 
@@ -79,7 +103,7 @@ Closing the panel stops that panel's server; closing the session also stops
 the observer. The only canvas action, `list_runs`, reads recorded run summaries.
 There are no start, resume, pause, cancel, edit, or delete controls.
 
-Select a run to see its issue/branch identity, recorded runtime state and
+Select a run to see its issue-or-task/branch identity, recorded runtime state and
 delivery recommendation. The connected **Prepare → Plan → Implement → Review →
 Summarize** path follows the workflow's phase metadata. Click a phase to inspect
 its artifacts, or use the arrow keys, Home and End with the phase tabs focused.
@@ -101,7 +125,7 @@ phase, expanded artifacts, mode and unchanged nested preview contents. Activity
 is filtered to the selected phase. Runtime observations and unknown future
 files remain accessible under **Run-level & other files**.
 
-Artifacts are grouped by their producing phase: issue/context under Prepare,
+Artifacts are grouped by their producing phase: issue or task and context under Prepare,
 plan under Plan, implementation/patch and compact reviewed-checkout metadata under Implement,
 both review outputs under Review, and report/result/synthesis/decision gate
 under Summarize. The inspector supports JSON, Markdown, patches and text files;
@@ -114,6 +138,8 @@ layouts:
 - **Captured issue** shows the issue number/title, clickable URL, upper-right
   update time, rendered Markdown body, and individual comments with their own
   links and update times. Captured comments do not include author metadata.
+- **Captured task** shows the supplied title and rendered Markdown description.
+  Task runs use the task title in the run list and have no GitHub issue link.
 - **Implementation plan** has a top status badge and titled sections.
   Acceptance criteria use **ID**, **Requirements**, and **Verification** columns.
 - **Implementation result** starts with a changed-file list: added files are
@@ -145,8 +171,8 @@ implementation output is unchanged.
 
 Workflow observation APIs are scoped to the owning Copilot session. Whenever
 this extension is loaded, its observer uses those supported APIs to record its
-own `issue-delivery` runs, even if no dashboard panel is open. It writes only a
-separate `dashboard.json` under `<git-dir>/issue-delivery/<run-id>/`, resolving
+own `implementation-flow` runs, even if no dashboard panel is open. It writes only a
+separate `dashboard.json` under `<git-dir>/implementation-flow/<run-id>/`, resolving
 `<git-dir>` with `git rev-parse --absolute-git-dir` just like the workflow.
 This keeps tracked files and protected delivery handoffs untouched.
 
@@ -185,6 +211,7 @@ are defined by the schemas and save sites in `workflow.mjs`:
 |---|---|
 | `context.json` | Run, repository, checkout, branch, starting revision and requirement digest |
 | `issue.json` | Number, title, nullable body, URL, update timestamp and comments |
+| `task.json` | Supplied task title and description |
 | `plan.json` | Status, goal, scope, acceptance criteria, steps, mitigations, rollback, validation requirement and blockers |
 | `implementation.json` | `available`, nullable `output`, `changedFiles`; output holds status, summary, changes, checks, deviations and blockers |
 | Both `*-review.json` files | `available`, nullable `output`; output holds verdict, summary, coverage, findings, checks and criteria |
@@ -218,7 +245,7 @@ serve arbitrary `.git` files or execute commands on behalf of the page.
 Run the adjacent deterministic tests without running live agents:
 
 ```sh
-node --test plugins/issue-delivery/extensions/issue-delivery/workflow.test.mjs plugins/issue-delivery/extensions/issue-delivery/dashboard.test.mjs
+node --test plugins/implementation-flow/extensions/implementation-flow/workflow.test.mjs plugins/implementation-flow/extensions/implementation-flow/dashboard.test.mjs
 ```
 
 The dashboard tests use temporary artifacts, a mocked owning-session SDK,

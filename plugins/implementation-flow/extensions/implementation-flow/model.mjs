@@ -7,11 +7,12 @@ export const isObject = (value) => value !== null && typeof value === "object" &
 export const isRunId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 
 const contracts = {
-  "context.json": ["Run context", { runId: "string", repository: "object", checkout: "string", branch: "string", baseSha: "string", artifacts: "string", issueRequirementDigest: "string" }],
+  "context.json": ["Run context", { runId: "string", repository: "object", checkout: "string", branch: "string", baseSha: "string", artifacts: "string" }],
   "issue.json": ["Captured issue", { number: "number", title: "string", body: "nullable-string", url: "string", updatedAt: "string", comments: "array" }],
+  "task.json": ["Captured task", { title: "string", description: "string" }],
   "plan.json": ["Implementation plan", { status: "string", goal: "string", scope: "object", acceptanceCriteria: "array", steps: "array", mitigations: "array", rollback: "string", validationRequired: "boolean", blockers: "array" }],
   "implementation.json": ["Implementation", { available: "boolean", output: "nullable-object", changedFiles: "array" }],
-  "issue-review.json": ["Issue coverage review", { available: "boolean", output: "nullable-object" }],
+  "requirements-review.json": ["Requirement coverage review", { available: "boolean", output: "nullable-object" }],
   "quality-security-review.json": ["Quality / security review", { available: "boolean", output: "nullable-object" }],
   "decision-gate.json": ["Decision gate", { maximumRecommendation: "string", failures: "array", uncertainties: "array" }],
   "summary.json": ["Synthesis", { recommendation: "string", summary: "string", rationale: "array", findings: "array", remainingRisks: "array", nextSteps: "array" }],
@@ -33,6 +34,10 @@ export function describeArtifact(name, value) {
     const [label, fields] = contracts[name];
     title = label;
     warnings = check(value, fields);
+    if (name === "context.json" && isObject(value) &&
+        typeof value.issueRequirementDigest !== "string" && typeof value.taskRequirementDigest !== "string") {
+      warnings.push("Expected an issueRequirementDigest or taskRequirementDigest string.");
+    }
     if (isObject(value) && Object.hasOwn(fields, "available")) {
       if (value.available === false) warnings.push("Agent output is unavailable; this is not a passing result.");
       if (value.available === true && value.output === null) warnings.push("Artifact says available but output is null.");
@@ -42,7 +47,7 @@ export function describeArtifact(name, value) {
     title = "Delivery result";
     warnings = check(value, isObject(value) && value.stage === "plan"
       ? { recommendation: "string", stage: "string", blockers: "array", artifacts: "string" }
-      : { recommendation: "string", issueUrl: "string", branch: "string", baseSha: "string", reviewedFingerprint: "string", changedFiles: "array", artifacts: "string", gate: "object", synthesis: "object", reviewAvailability: "object" });
+      : { recommendation: "string", ...(isObject(value) && Object.hasOwn(value, "taskTitle") ? { taskTitle: "string" } : { issueUrl: "string" }), branch: "string", baseSha: "string", reviewedFingerprint: "string", changedFiles: "array", artifacts: "string", gate: "object", synthesis: "object", reviewAvailability: "object" });
   } else if (name === "untracked-files.json") {
     title = "New-file manifest";
     warnings = Array.isArray(value)
@@ -60,7 +65,7 @@ export function describeArtifact(name, value) {
 
 export function validObservation(value) {
   return isObject(value) && value.schemaVersion === SNAPSHOT_VERSION && isRunId(value.runId) &&
-    value.workflowName === "issue-delivery" && typeof value.ownerSessionId === "string" &&
+    value.workflowName === "implementation-flow" && typeof value.ownerSessionId === "string" &&
     RUN_STATUSES.includes(value.status) && Number.isSafeInteger(value.revision) && value.revision >= 0 &&
     (value.currentPhaseId === undefined || value.currentPhaseId === null || typeof value.currentPhaseId === "string") &&
     ["createdAt", "updatedAt", "observedAt"].every((key) => Number.isFinite(value[key])) &&
@@ -102,7 +107,7 @@ export function observationFromDetail(detail, ownerSessionId, now = Date.now()) 
         detail.progress.records.length > MAX_PROGRESS || detail.progress.records.some((record) => record.text.length > 4_000)),
     },
   };
-  if (!validObservation(value)) throw new Error("Runtime returned an unsupported issue-delivery observation shape.");
+  if (!validObservation(value)) throw new Error("Runtime returned an unsupported implementation-flow observation shape.");
   return value;
 }
 

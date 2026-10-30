@@ -347,7 +347,7 @@ function renderPhase(run) {
     branches.hidden = phase.key !== "review";
     branches.replaceChildren();
     if (phase.key === "review") {
-      for (const [label, title] of [["3-issue-coverage", "Issue coverage"], ["4-quality-security", "Quality & security"]]) {
+      for (const [label, title] of [["3-requirement-coverage", "Requirement coverage"], ["4-quality-security", "Quality & security"]]) {
         const agent = phase.agents.find((agent) => agent.label === label);
         const lane = text("div", undefined, "review-lane");
         lane.append(icon(document, "branch"), text("span", title), badge(document, agent?.status ?? "Not recorded"));
@@ -410,7 +410,7 @@ async function refresh(force = false) {
     if (!latestRuns.some((run) => run.runId === selectedRun)) resetRun(latestRuns[0]?.runId ?? null);
     renderRuns(latestRuns);
     if (!latestRuns.length) {
-      $("empty").hidden = false; $("empty").textContent = "No runs recorded yet. Run issue-delivery in this checkout to start collecting evidence.";
+      $("empty").hidden = false; $("empty").textContent = "No runs recorded yet. Run implementation-flow in this checkout to start collecting evidence.";
       $("run-detail").hidden = true;
     } else await loadRun();
     showConnection(data.observer.errors.map((error) => `Progress recording unavailable (${error.runId}): ${error.message}`).join("\n"));

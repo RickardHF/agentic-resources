@@ -1,15 +1,15 @@
 const outputs = {
-  Prepare: ["issue.json", "context.json"],
+  Prepare: ["issue.json", "task.json", "context.json"],
   Plan: ["plan.json"],
   Implement: ["implementation.json", "changes.patch", "review-snapshot.json"],
-  Review: ["issue-review.json", "quality-security-review.json"],
+  Review: ["requirements-review.json", "quality-security-review.json"],
   Summarize: ["report.md", "result.json", "summary.json", "decision-gate.json"],
 };
 const labels = {
-  "issue.json": "Captured issue", "context.json": "Run context", "plan.json": "Implementation plan",
+  "issue.json": "Captured issue", "task.json": "Captured task", "context.json": "Run context", "plan.json": "Implementation plan",
   "implementation.json": "Implementation result", "changes.patch": "Source changes",
   "untracked-files.json": "New-file manifest", "review-snapshot.json": "Reviewed checkout",
-  "issue-review.json": "Issue coverage", "quality-security-review.json": "Quality & security",
+  "requirements-review.json": "Requirement coverage", "quality-security-review.json": "Quality & security",
   "report.md": "Delivery report", "result.json": "Final result", "summary.json": "Review synthesis",
   "decision-gate.json": "Decision gate", "dashboard.json": "Runtime observations",
 };

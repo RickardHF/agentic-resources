@@ -19,11 +19,11 @@ import { meta } from "./workflow.mjs";
 const runId = "test-run";
 function detail(overrides = {}) {
   return {
-    runId, workflowName: "issue-delivery", revision: 1, status: "running",
+    runId, workflowName: "implementation-flow", revision: 1, status: "running",
     createdAt: 1, updatedAt: 10, observedAt: 10, startedAt: 2, completedAt: null, terminal: null,
     phases: [{ id: "review", title: "Review", status: "active", entryCount: 1, lastEnteredRunAttempt: 1 }],
     agents: [
-      { agentId: "a1", phaseId: "review", label: "3-issue-coverage", status: "running", prompt: "must not be persisted" },
+      { agentId: "a1", phaseId: "review", label: "3-requirement-coverage", status: "running", prompt: "must not be persisted" },
       { agentId: "a2", phaseId: "review", label: "4-quality-security", status: "running" },
     ],
     progress: { records: [{ seq: 1, attempt: 1, phaseId: "review", recordedAt: 10, kind: "log", text: "Reviewing" }], hasMoreOlder: false },
@@ -40,15 +40,15 @@ const phaseRun = (overrides = {}) => ({
   ...overrides,
 });
 const readyPlan = {
-  status: "ready", goal: "Solve the issue", scope: { included: ["feature"], excluded: [] },
+  status: "ready", goal: "Solve the request", scope: { included: ["feature"], excluded: [] },
   acceptanceCriteria: [{ id: "AC1", requirement: "Behavior", verification: "Focused test" }],
   steps: ["Implement"], mitigations: [], rollback: "Revert", validationRequired: true, blockers: [],
 };
 async function fixture(t, options) {
-  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "issue-dashboard-"));
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "implementation-flow-dashboard-"));
   const root = await fs.realpath(temporary);
   t.after(() => fs.rm(root, { recursive: true, force: true }));
-  const artifactRoot = path.join(root, "issue-delivery");
+  const artifactRoot = path.join(root, "implementation-flow");
   return {
     root, artifactRoot, store: createStore(artifactRoot, options),
     async write(name, value, id = runId) {
@@ -90,6 +90,36 @@ test("known JSON contracts tolerate extra fields and key order, but identify inv
   assert.ok(describeArtifact("plan.json", []).warnings.length);
 });
 
+test("task runs expose their title, requirements and result without an issue link or contract warnings", async (t) => {
+  const f = await fixture(t);
+  const task = { title: "Standalone task", description: "Implement **the behavior**." };
+  const context = {
+    runId, repository: { checkout: "/repo" }, checkout: "/repo", branch: "main",
+    baseSha: "abc", artifacts: "/artifacts", taskRequirementDigest: "digest",
+  };
+  const result = {
+    recommendation: "successful", taskTitle: task.title, branch: "main", baseSha: "abc",
+    reviewedFingerprint: "123", changedFiles: [], artifacts: "/artifacts",
+    gate: {}, synthesis: {}, reviewAvailability: {},
+  };
+  for (const [name, value] of [["task.json", task], ["context.json", context], ["result.json", result]]) {
+    await f.write(name, value);
+    assert.deepEqual(describeArtifact(name, value).warnings, []);
+  }
+  const run = await f.store.getRun(runId);
+  assert.equal(run.title, task.title);
+  assert.equal(run.issueUrl, null);
+  assert.deepEqual(run.warnings, []);
+  assert.deepEqual(run.phases[0].artifacts.map(({ name }) => name), ["task.json", "context.json"]);
+  assert.equal(run.phases[0].artifacts[0].label, "Captured task");
+  assert.equal((await f.store.listRuns())[0].title, task.title);
+  const doc = testDocument();
+  const preview = renderArtifact(doc, "task.json", task);
+  assert.match(preview.textContent, /Standalone task/);
+  assert.match(preview.textContent, /Implement the behavior/);
+  assert.equal(preview.querySelectorAll("strong").length, 1);
+});
+
 test("both result variants, unavailable agent output and array manifests are represented honestly", () => {
   assert.deepEqual(describeArtifact("result.json", { recommendation: "inconclusive", stage: "plan", blockers: ["Need input"], artifacts: "/artifacts" }).warnings, []);
   assert.deepEqual(describeArtifact("result.json", {
@@ -97,7 +127,7 @@ test("both result variants, unavailable agent output and array manifests are rep
     baseSha: "abc", reviewedFingerprint: "123", changedFiles: [], artifacts: "/artifacts",
     gate: {}, synthesis: {}, reviewAvailability: {},
   }).warnings, []);
-  assert.match(describeArtifact("issue-review.json", { available: false, output: null }).warnings.join(), /unavailable/);
+  assert.match(describeArtifact("requirements-review.json", { available: false, output: null }).warnings.join(), /unavailable/);
   assert.match(describeArtifact("implementation.json", { available: true, output: null, changedFiles: [] }).warnings.join(), /null/);
   assert.deepEqual(describeArtifact("untracked-files.json", [{ path: "new.js", mode: 33188, sha256: "abc", symlink: false }]).warnings, []);
   assert.ok(describeArtifact("untracked-files.json", {}).warnings.length);
@@ -116,6 +146,7 @@ test("observation snapshots exclude prompts and bound progress with explicit tru
   assert.equal(JSON.stringify(value).includes("must not be persisted"), false);
   assert.equal(value.agents.length, 2);
   assert.equal(validObservation({ ...value, schemaVersion: 999 }), false);
+  assert.equal(validObservation({ ...value, workflowName: "another-workflow" }), false);
   assert.equal(validObservation({ ...value, phases: [null] }), false);
 });
 
@@ -147,7 +178,7 @@ test("every known artifact belongs to its producing phase; future files stay ins
   const expected = [
     ["issue.json", "context.json"], ["plan.json"],
     ["implementation.json", "changes.patch"],
-    ["issue-review.json", "quality-security-review.json"],
+    ["requirements-review.json", "quality-security-review.json"],
     ["report.md", "result.json", "summary.json", "decision-gate.json"],
   ];
   for (const name of [...expected.flat(), "future.json", "dashboard.json", "untracked-files.json", "review-snapshot.json"]) await f.write(name, "{}");
@@ -158,6 +189,7 @@ test("every known artifact belongs to its producing phase; future files stay ins
   assert.equal(run.phases[2].artifacts[1].format, "Patch");
   assert.equal(run.phases[4].artifacts[0].format, "Markdown");
   assert.equal(run.phases[1].artifacts[0].label, "Implementation plan");
+  assert.equal(run.phases[3].artifacts[0].label, "Requirement coverage");
   const listed = (await f.store.listRuns())[0];
   assert.equal(listed.phases, undefined);
   assert.equal(listed.runArtifacts, undefined);
@@ -219,7 +251,7 @@ test("failed validation and failing review verdicts mark their phase red", () =>
   run.observation.phases[3].status = "completed";
   const phases = buildPhaseModel(run, meta.phases, {
     "implementation.json": { available: true, output: { checks: [{ outcome: "failed" }] } },
-    "issue-review.json": { available: true, output: { verdict: "fail" } },
+    "requirements-review.json": { available: true, output: { verdict: "fail" } },
   }).phases;
   assert.equal(phases[2].color, "red");
   assert.equal(phases[3].color, "red");
@@ -249,8 +281,8 @@ test("resumed phases use the latest agent per branch, retaining both parallel re
   run.observation.phases[2].status = "completed";
   run.observation.phases[3].status = "active";
   run.observation.agents = [
-    { agentId: "old", phaseId: "phase-3", label: "3-issue-coverage", status: "failed", startedAt: 1 },
-    { agentId: "new", phaseId: "phase-3", label: "3-issue-coverage", status: "running", startedAt: 20 },
+    { agentId: "old", phaseId: "phase-3", label: "3-requirement-coverage", status: "failed", startedAt: 1 },
+    { agentId: "new", phaseId: "phase-3", label: "3-requirement-coverage", status: "running", startedAt: 20 },
     { agentId: "parallel", phaseId: "phase-3", label: "4-quality-security", status: "completed", startedAt: 15 },
   ];
   const phase = buildPhaseModel(run, meta.phases).phases[3];
@@ -475,7 +507,7 @@ test("loopback server serves assets and read-only APIs behind a private capabili
   const page = await fetch(server.url);
   assert.equal(page.status, 200);
   assert.match(page.headers.get("content-security-policy"), /script-src 'self'/);
-  assert.match(await page.text(), /Issue delivery runs/);
+  assert.match(await page.text(), /Implementation flow runs/);
   for (const asset of ["dashboard.js", "dashboard.css", "renderer.mjs", "diff.mjs"]) assert.equal((await fetch(new URL(asset, server.url))).status, 200);
   const result = await (await fetch(new URL("api/runs", server.url))).json();
   assert.equal(result.runs[0].runId, runId);
@@ -503,7 +535,7 @@ test("canvas reopening is idempotent and all actions are observational", async (
   const f = await fixture(t);
   const dashboard = createDashboardCanvas((options) => options, f.store);
   t.after(() => dashboard.close());
-  assert.equal(dashboard.canvas.id, "issue-delivery-runs");
+  assert.equal(dashboard.canvas.id, "implementation-flow-runs");
   assert.deepEqual(dashboard.canvas.actions.map((action) => action.name), ["list_runs"]);
   const [first, second] = await Promise.all([
     dashboard.canvas.open({ instanceId: "panel-1" }), dashboard.canvas.open({ instanceId: "panel-1" }),
@@ -534,7 +566,7 @@ test("entrypoint preserves workflow registration and contributes no mutation too
   assert.match(source, /workflows: \[defineWorkflow\(\{ meta, run \}\)\]/);
   assert.match(source, /canvases: \[dashboard.canvas\]/);
   assert.doesNotMatch(source, /onPermissionRequest|requestedEnvironmentVariables|tools:/);
-  assert.equal(path.basename(await resolveArtifactRoot()), "issue-delivery");
+  assert.equal(path.basename(await resolveArtifactRoot()), "implementation-flow");
 });
 
 test("entrypoint joins with both contributions and cleans up observer and canvases", async (t) => {
@@ -547,11 +579,11 @@ test("entrypoint joins with both contributions and cleans up observer and canvas
     createCanvas: (options) => options, defineWorkflow: (options) => options,
     joinSession: async (options) => { joined = options; return r.session; },
     createStore, resolveArtifactRoot: async () => f.artifactRoot, startObserver,
-    logError: async () => {}, createDashboardCanvas, meta: { name: "issue-delivery" }, run: async () => {},
+    logError: async () => {}, createDashboardCanvas, meta: { name: "implementation-flow" }, run: async () => {},
     process: { once: (signal, callback) => signals.set(signal, callback), exit: () => {} },
   });
-  assert.equal(joined.workflows[0].meta.name, "issue-delivery");
-  assert.equal(joined.canvases[0].id, "issue-delivery-runs");
+  assert.equal(joined.workflows[0].meta.name, "implementation-flow");
+  assert.equal(joined.canvases[0].id, "implementation-flow-runs");
   const panel = await joined.canvases[0].open({ instanceId: "wired-panel" });
   assert.equal((await fetch(panel.url)).status, 200);
   assert.equal(r.listenerCount, 1);
@@ -706,7 +738,7 @@ test("implementation renders status-colored files before a property-heading-free
 });
 
 test("both reviewers show output alone with finding details and no wrapper/property headings", () => {
-  for (const name of ["issue-review.json", "quality-security-review.json"]) {
+  for (const name of ["requirements-review.json", "quality-security-review.json"]) {
     const node = renderArtifact(testDocument(), name, { available: true, output: reviewOutput });
     assert.equal(node.querySelector("h3"), null);
     assert.equal(node.querySelector("dl"), null);
@@ -727,7 +759,7 @@ test("synthesis and both final-result variants use titled sections and dispositi
     recommendation: "unsuccessful", issueUrl: "https://github.com/o/r/issues/42", branch: "main", baseSha: "abc",
     reviewedFingerprint: "123", changedFiles: ["src/feature.ts"], artifacts: "/recorded",
     gate: { maximumRecommendation: "unsuccessful", failures: ["Q1"], uncertainties: [] },
-    synthesis, reviewAvailability: { issue: true, qualitySecurity: false },
+    synthesis, reviewAvailability: { requirements: true, qualitySecurity: false },
   };
   for (const [name, value] of [["summary.json", synthesis], ["result.json", result]]) {
     const node = renderArtifact(testDocument(), name, value);
@@ -740,7 +772,7 @@ test("synthesis and both final-result variants use titled sections and dispositi
   const node = renderArtifact(testDocument(), "result.json", result);
   assert.deepEqual(node.children.slice(0, 3).map((node) => node.firstChild.textContent), ["Recommendation", "Synthesis", "Gate"]);
   const availability = node.querySelectorAll("section").find((node) => node.firstChild.textContent === "Review Availability");
-  assert.match(availability.textContent, /IssueYesQuality SecurityNo/);
+  assert.match(availability.textContent, /RequirementsYesQuality SecurityNo/);
   const blocked = renderArtifact(testDocument(), "result.json", { stage: "plan", recommendation: "inconclusive", blockers: ["Need a decision"], artifacts: "/recorded" });
   assert.match(blocked.textContent, /BlockersNeed a decision/);
   assert.equal(blocked.querySelector("dl"), null);
@@ -893,6 +925,13 @@ const clientRecords = () => new Map([
   ["untracked-files.json", { text: JSON.stringify([{ path: "new.ts", mode: 33188, sha256: "abc", symlink: false }]) }],
   ["review-snapshot.json", { text: JSON.stringify({ branch: "main", head: "abc", fingerprint: "hash", changedFiles: ["new.ts"], note: "Tracked patch only" }) }],
 ]);
+
+test("dashboard labels the review lane for both task and issue requirements", async (t) => {
+  const client = await dashboardClient(t, clientRecords());
+  await client.phase("review");
+  assert.match(client.nodes.get("review-branches").textContent, /Requirement coverage/);
+  assert.match(client.nodes.get("review-branches").textContent, /Quality & security/);
+});
 
 test("dashboard places checkout above artifacts, relocates manifest, and preserves exact Raw toggles", async (t) => {
   const client = await dashboardClient(t, clientRecords());

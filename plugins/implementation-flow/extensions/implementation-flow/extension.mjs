@@ -9,7 +9,7 @@ let session;
 let observer;
 const dashboard = createDashboardCanvas(createCanvas, store, {
   health: () => observer?.health() ?? { errors: [] },
-  reportError: (error) => { void logError(session, `Issue delivery dashboard failed: ${error.message}`); },
+  reportError: (error) => { void logError(session, `Implementation flow dashboard failed: ${error.message}`); },
 });
 let cleanupTask;
 const cleanup = () => cleanupTask ??= Promise.all([observer?.close(), dashboard.close()]).then(() => {});
@@ -22,7 +22,7 @@ observer = startObserver(session, store);
 for (const signal of ["SIGTERM", "SIGINT"]) {
   process.once(signal, () => {
     void cleanup().then(() => process.exit(0), async (error) => {
-      await logError(session, `Issue delivery dashboard cleanup failed: ${error.message}`);
+      await logError(session, `Implementation flow dashboard cleanup failed: ${error.message}`);
       process.exit(1);
     });
   });

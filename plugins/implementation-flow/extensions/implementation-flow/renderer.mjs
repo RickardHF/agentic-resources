@@ -454,15 +454,16 @@ export function renderArtifact(doc, name, value, evidence = {}) {
   const budget = previewBudget();
   let node;
   if (name === "issue.json") node = issuePreview(doc, value, budget);
+  else if (name === "task.json") node = titledValue(doc, "", value, budget);
   else if (name === "plan.json") node = planPreview(doc, value, budget);
-  else if (["implementation.json", "issue-review.json", "quality-security-review.json"].includes(name)) {
+  else if (["implementation.json", "requirements-review.json", "quality-security-review.json"].includes(name)) {
     node = element(doc, "div", undefined, "artifact-document");
     if (name === "implementation.json") node.append(renderChangedFiles(doc, value.changedFiles, evidence));
     node.append(reportPreview(doc, value, budget, name === "implementation.json"));
   } else if (name === "result.json") {
     const ordered = {};
     for (const key of ["recommendation", "stage", "blockers", "synthesis", "gate", "reviewAvailability",
-      "issueUrl", "branch", "baseSha", "reviewedFingerprint", "changedFiles", "artifacts"]) {
+      "issueUrl", "taskTitle", "branch", "baseSha", "reviewedFingerprint", "changedFiles", "artifacts"]) {
       if (Object.hasOwn(value, key)) ordered[key] = value[key];
     }
     node = titledValue(doc, "", { ...ordered, ...value }, budget);

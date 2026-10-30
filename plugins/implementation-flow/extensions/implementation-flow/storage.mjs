@@ -16,7 +16,7 @@ export class ReadError extends Error {
 
 export async function resolveArtifactRoot(cwd = process.cwd()) {
   const { stdout } = await promisify(execFile)("git", ["--no-pager", "rev-parse", "--absolute-git-dir"], { cwd, encoding: "utf8" });
-  return path.join(await fs.realpath(stdout.trim()), "issue-delivery");
+  return path.join(await fs.realpath(stdout.trim()), "implementation-flow");
 }
 
 export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTES } = {}) {
@@ -81,7 +81,7 @@ export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTE
     }
     artifacts.sort((a, b) => a.name.localeCompare(b.name));
     const metadata = {};
-    for (const name of ["dashboard.json", "context.json", "issue.json", "result.json", "plan.json", "implementation.json", "issue-review.json", "quality-security-review.json"]) {
+    for (const name of ["dashboard.json", "context.json", "issue.json", "task.json", "result.json", "plan.json", "implementation.json", "requirements-review.json", "quality-security-review.json"]) {
       if (!artifacts.some((artifact) => artifact.name === name)) continue;
       try {
         const artifact = await readArtifact(runId, name);
@@ -97,10 +97,11 @@ export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTE
     if (!validObservation(observation) || observation.runId !== runId) observation = null;
     const context = metadata["context.json"];
     const issue = metadata["issue.json"];
+    const task = metadata["task.json"];
     const result = metadata["result.json"];
     const modifiedAt = artifacts.length ? Math.max(...artifacts.map((artifact) => artifact.modifiedAt)) : (await fs.stat(dir)).mtimeMs;
     const run = {
-      runId, title: typeof issue?.title === "string" ? issue.title : runId,
+      runId, title: typeof issue?.title === "string" ? issue.title : typeof task?.title === "string" ? task.title : typeof result?.taskTitle === "string" ? result.taskTitle : runId,
       issueUrl: typeof issue?.url === "string" ? issue.url : typeof result?.issueUrl === "string" ? result.issueUrl : null,
       branch: typeof context?.branch === "string" ? context.branch : typeof result?.branch === "string" ? result.branch : null,
       recommendation: ["successful", "unsuccessful", "inconclusive"].includes(result?.recommendation) ? result.recommendation : null,

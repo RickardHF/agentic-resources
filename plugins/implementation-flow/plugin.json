@@ -1,6 +1,6 @@
 {
-    "name": "issue-delivery",
-    "description": "Plan and implement a GitHub issue, run independent reviews, and inspect delivery artifacts in a read-only dashboard.",
+    "name": "implementation-flow",
+    "description": "Plan and implement a GitHub issue or task, run independent reviews, and inspect delivery artifacts in a read-only dashboard.",
     "version": "1.0.0",
     "author": {
         "name": "Rickard Hole Falck"

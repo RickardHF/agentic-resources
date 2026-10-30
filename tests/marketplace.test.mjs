@@ -48,13 +48,14 @@ for (const catalogPath of catalogs) {
 test("Claude compatibility preserves engineering-team without advertising Copilot-only extensions", async () => {
   const copilot = await readJson(catalogs[0]);
   const claude = await readJson(catalogs[1]);
-  assert.deepEqual(copilot.plugins.map(({ name }) => name), ["engineering-team", "issue-delivery"]);
+  assert.deepEqual(copilot.plugins.map(({ name }) => name), ["engineering-team", "implementation-flow"]);
   assert.deepEqual(claude.plugins.map(({ name }) => name), ["engineering-team"]);
   assert.deepEqual(
     await readJson("plugins/engineering-team/plugin.json"),
     await readJson("plugins/engineering-team/.claude-plugin/plugin.json"),
   );
-  const delivery = await readJson("plugins/issue-delivery/plugin.json");
+  const delivery = await readJson("plugins/implementation-flow/plugin.json");
+  assert.equal(delivery.version, "1.0.0");
   assert.deepEqual(delivery.extensions, ["./extensions"]);
   assert.equal(delivery.$schema, undefined, "SDK extension paths require the Copilot-specific manifest");
 });
