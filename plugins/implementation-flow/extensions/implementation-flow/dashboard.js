@@ -16,7 +16,11 @@ let pathStamp = "";
 let phaseStamp = "";
 let overviewStamp = "";
 let runRequest = 0;
-const statusText = (run) => run.freshness === "artifact-only" ? "Artifact-only" : run.freshness === "stale" ? "Status unavailable" : run.observation.status;
+let controlsStamp = "";
+const statusText = (run) => run.freshness === "artifact-only" ? "Artifact-only"
+  : run.freshness === "stale" ? "Status unavailable"
+    : run.pendingDecision?.kind === "parked" ? "Parked (reopenable)"
+      : run.pendingDecision ? "Awaiting decision" : run.observation.status;
 
 async function request(route, params = {}) {
   const url = new URL(`api/${route}`, location.href);
@@ -25,6 +29,237 @@ async function request(route, params = {}) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status}).`);
   return data;
+}
+
+async function mutate(route, body) {
+  const response = await fetch(new URL(`api/${route}`, location.href), {
+    method: "POST", cache: "no-store", signal: AbortSignal.timeout(10_000),
+    headers: { "Content-Type": "application/json", "X-Implementation-Flow": "1" },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status}).`);
+  return data;
+}
+
+function controlButton(label, action, parent, disabled = false) {
+  const button = text("button", label);
+  button.type = "button";
+  button.disabled = disabled;
+  button.addEventListener("click", action);
+  parent.append(button);
+  return button;
+}
+
+function controlField(tag, label, parent, value = "") {
+  const wrapper = text("label", undefined, "control-field");
+  wrapper.append(text("span", label));
+  const input = text(tag);
+  if (tag === "textarea") input.rows = 3;
+  input.value = value;
+  wrapper.append(input);
+  parent.append(wrapper);
+  return input;
+}
+
+function reportControlError(panel, error) {
+  let status = panel.querySelector(".control-status");
+  if (!status) {
+    status = text("p", undefined, "control-status");
+    status.setAttribute("role", "status");
+    panel.append(status);
+  }
+  status.textContent = error.message;
+  status.dataset.error = "true";
+}
+
+async function sendDecision(panel, run, option, feedback, planEditor) {
+  try {
+    let plan;
+    if (planEditor?.value.trim()) {
+      try { plan = JSON.parse(planEditor.value); }
+      catch { throw new Error("Plan must be valid JSON before submitting."); }
+    }
+    const target = panel.querySelector(".comment-target")?.value.trim();
+    const note = feedback.value.trim();
+    const combined = target && note ? `Comment on ${target}: ${note}` : note;
+    await mutate("respond", { runId: run.runId, action: option.action, feedback: combined, ...(plan ? { plan } : {}) });
+    await refresh(true);
+  } catch (error) { reportControlError(panel, error); }
+}
+
+function renderControls(run) {
+  const panel = $("run-controls");
+  const stamp = JSON.stringify([
+    run.runId, run.observation?.status, run.pendingDecision,
+    run.artifacts.map((entry) => [entry.name, entry.size, entry.modifiedAt]),
+  ]);
+  if (stamp === controlsStamp) return;
+  controlsStamp = stamp;
+  panel.replaceChildren();
+  panel.hidden = false;
+  const heading = text("h2", "Workflow controls");
+  panel.append(heading);
+  const buttons = text("div", undefined, "control-actions");
+  for (const action of ["pause", "resume", "cancel"]) {
+    controlButton(action[0].toUpperCase() + action.slice(1), async () => {
+      try { await mutate(action, { runId: run.runId }); await refresh(true); }
+      catch (error) { reportControlError(panel, error); }
+    }, buttons, action === "pause" && run.observation?.status !== "running" || action === "resume" && run.observation?.status !== "paused");
+  }
+  panel.append(buttons);
+
+  if (run.pendingDecision) {
+    const pending = text("section", undefined, "decision-panel");
+    pending.append(text("h3", "Decision needed"), typeof run.pendingDecision.message === "string"
+      ? renderMarkdown(document, run.pendingDecision.message)
+      : text("p", "Decision message unavailable.", "notice"));
+    const feedback = controlField("textarea", "Feedback or inline comment", pending);
+    const target = controlField("input", "Comment target (optional)", pending);
+    target.className = "comment-target";
+    target.placeholder = "For example: AC2 or implementation step 3";
+    let planEditor;
+    if (run.pendingDecision.kind === "plan-approval") {
+      const details = text("details");
+      details.append(text("summary", "Edit plan JSON"));
+      planEditor = controlField("textarea", "Plan", details);
+      planEditor.rows = 12;
+      const planArtifact = run.artifacts.find((entry) => entry.name === "plan.json");
+      if (planArtifact) void readArtifact(run.runId, planArtifact).then((data) => {
+        if (!planEditor.value) planEditor.value = data.text;
+      }).catch((error) => reportControlError(panel, error));
+      pending.append(details);
+    }
+    const options = text("div", undefined, "control-actions decision-options");
+    for (const option of run.pendingDecision.options) {
+      controlButton(option.label, () => { void sendDecision(panel, run, option, feedback, planEditor); }, options);
+    }
+    pending.append(options);
+    panel.append(pending);
+  }
+
+  const feedbackSection = text("details", undefined, "feedback-panel");
+  feedbackSection.append(text("summary", "Queue chat feedback"));
+  const feedback = controlField("textarea", "Used at the next planning or implementation checkpoint", feedbackSection);
+  controlButton("Queue feedback", async () => {
+    try { await mutate("feedback", { runId: run.runId, feedback: feedback.value }); feedback.value = ""; await refresh(true); }
+    catch (error) { reportControlError(panel, error); }
+  }, feedbackSection);
+  panel.append(feedbackSection);
+
+  const evidenceSection = text("details", undefined, "evidence-panel");
+  evidenceSection.append(text("summary", "Attach verification evidence"));
+  const evidenceId = controlField("input", "Evidence ID", evidenceSection);
+  const criterionId = controlField("input", "Acceptance criterion ID (optional)", evidenceSection);
+  const evidenceDescription = controlField("input", "Description", evidenceSection);
+  const command = controlField("input", "Command or verification method (optional)", evidenceSection);
+  const outcome = controlField("select", "Outcome", evidenceSection);
+  for (const value of ["passed", "failed"]) {
+    const option = text("option", value);
+    option.value = value;
+    outcome.append(option);
+  }
+  const evidence = controlField("textarea", "Observed evidence", evidenceSection);
+  controlButton("Attach evidence", async () => {
+    try {
+      await mutate("evidence", {
+        runId: run.runId, id: evidenceId.value.trim(),
+        ...(criterionId.value.trim() ? { criterionId: criterionId.value.trim() } : {}),
+        description: evidenceDescription.value.trim(),
+        ...(command.value.trim() ? { command: command.value.trim() } : {}),
+        outcome: outcome.value, evidence: evidence.value.trim(),
+      });
+      evidence.value = "";
+      await refresh(true);
+    } catch (error) { reportControlError(panel, error); }
+  }, evidenceSection);
+  panel.append(evidenceSection);
+
+  const iterations = run.artifacts.filter((entry) => entry.name.startsWith("iterations/"));
+  if (iterations.length) {
+    const history = text("details", undefined, "history-panel");
+    history.append(text("summary", `Iteration and rerun history (${iterations.length} artifacts)`));
+    const picker = text("select");
+    picker.setAttribute("aria-label", "Select an archived artifact");
+    for (const entry of iterations) {
+      const option = text("option", entry.name);
+      option.value = entry.name;
+      picker.append(option);
+    }
+    const preview = text("pre", "", "history-preview");
+    controlButton("View artifact", async () => {
+      try { preview.textContent = (await request("artifact", { runId: run.runId, name: picker.value })).text; }
+      catch (error) { preview.textContent = `Cannot load archived artifact: ${error.message}`; }
+    }, history);
+    history.prepend(picker);
+
+    const plans = run.artifacts.filter((entry) => /(?:^|\/)plan(?:-v[0-9]+|-rejected-[0-9]+)?\.json$/.test(entry.name));
+    if (plans.length > 1) {
+      history.append(text("h3", "Compare plan versions"));
+      const first = text("select"); const second = text("select");
+      for (const select of [first, second]) for (const entry of plans) {
+        const option = text("option", entry.name); option.value = entry.name; select.append(option);
+      }
+      first.setAttribute("aria-label", "Earlier plan version");
+      second.setAttribute("aria-label", "Later plan version");
+      if (plans.length > 1) second.value = plans.at(-1).name;
+      const diff = text("pre", "", "history-preview");
+      controlButton("Compare plans", async () => {
+        try {
+          const [a, b] = await Promise.all([
+            request("artifact", { runId: run.runId, name: first.value }),
+            request("artifact", { runId: run.runId, name: second.value }),
+          ]);
+          diff.textContent = comparePlans(a.value, b.value);
+        } catch (error) { diff.textContent = `Cannot compare plans: ${error.message}`; }
+      }, history);
+      history.append(first, second, diff);
+    }
+    history.append(preview);
+    panel.append(history);
+  }
+
+  const starter = text("details", undefined, "start-panel");
+  starter.append(text("summary", "Start a workflow"));
+  const issue = controlField("input", "GitHub issue URL", starter);
+  const title = controlField("input", "Task title", starter);
+  const description = controlField("textarea", "Task description", starter);
+  const confirmation = text("label", undefined, "confirm-field");
+  const checked = text("input");
+  checked.type = "checkbox";
+  confirmation.append(checked, text("span", "I confirm starting this workflow in the current repository."));
+  starter.append(confirmation);
+  controlButton("Start workflow", async () => {
+    const args = issue.value.trim()
+      ? { issueUrl: issue.value.trim() }
+      : { taskTitle: title.value.trim(), taskDescription: description.value.trim() };
+    if (Boolean(issue.value.trim()) === Boolean(title.value.trim() || description.value.trim())) {
+      reportControlError(panel, new Error("Provide either an issue URL or both task fields, not both."));
+      return;
+    }
+    try { await mutate("start", { args, confirm: checked.checked }); await refresh(true); }
+    catch (error) { reportControlError(panel, error); }
+  }, starter);
+  panel.append(starter);
+}
+
+function comparePlans(before, after) {
+  if (!before || !after) return "Both selected artifacts must contain a plan.";
+  const compareList = (label, oldItems, newItems, key) => {
+    const oldMap = new Map((oldItems ?? []).map((item, index) => [key(item, index), item]));
+    const newMap = new Map((newItems ?? []).map((item, index) => [key(item, index), item]));
+    const lines = [];
+    for (const [id, value] of oldMap) {
+      if (!newMap.has(id)) lines.push(`- ${label}: ${JSON.stringify(value)}`);
+      else if (JSON.stringify(value) !== JSON.stringify(newMap.get(id))) lines.push(`~ ${label}: ${JSON.stringify(value)} => ${JSON.stringify(newMap.get(id))}`);
+    }
+    for (const [id, value] of newMap) if (!oldMap.has(id)) lines.push(`+ ${label}: ${JSON.stringify(value)}`);
+    return lines;
+  };
+  return [
+    ...compareList("acceptance criterion", before.acceptanceCriteria, after.acceptanceCriteria, (item) => item.id),
+    ...compareList("step", before.steps, after.steps, (_item, index) => String(index)),
+  ].join("\n") || "No acceptance-criteria or step changes.";
 }
 
 function showConnection(message) {
@@ -39,6 +274,7 @@ function resetRun(runId) {
   pathStamp = "";
   phaseStamp = "";
   overviewStamp = "";
+  controlsStamp = "";
   panels.clear();
   artifactRequests.clear();
   $("checkout").replaceChildren();
@@ -387,6 +623,7 @@ async function loadRun() {
   if (runId !== selectedRun || sequence !== runRequest) return;
   lastRun = run;
   $("empty").hidden = true; $("run-detail").hidden = false;
+  renderControls(run);
   if (!run.phases.some((phase) => phase.key === selectedPhase)) {
     selectedPhase = run.phases.find((phase) => phase.state === "active")?.key
       ?? run.phases.find((phase) => phase.state === "error")?.key

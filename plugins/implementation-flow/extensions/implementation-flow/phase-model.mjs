@@ -3,7 +3,7 @@ const outputs = {
   Plan: ["plan.json"],
   Implement: ["implementation.json", "changes.patch", "review-snapshot.json"],
   Review: ["requirements-review.json", "quality-security-review.json"],
-  Summarize: ["report.md", "result.json", "summary.json", "decision-gate.json"],
+  Summarize: ["report.md", "result.json", "summary.json", "decision-gate.json", "verification.json"],
 };
 const labels = {
   "issue.json": "Captured issue", "task.json": "Captured task", "context.json": "Run context", "plan.json": "Implementation plan",
@@ -11,11 +11,14 @@ const labels = {
   "untracked-files.json": "New-file manifest", "review-snapshot.json": "Reviewed checkout",
   "requirements-review.json": "Requirement coverage", "quality-security-review.json": "Quality & security",
   "report.md": "Delivery report", "result.json": "Final result", "summary.json": "Review synthesis",
-  "decision-gate.json": "Decision gate", "dashboard.json": "Runtime observations",
+  "decision-gate.json": "Decision gate", "dashboard.json": "Runtime observations", "feedback.json": "Human feedback",
+  "verification.json": "Independent verification", "pending-decision.json": "Pending decision",
+  "issue-delta.json": "GitHub issue updates",
 };
 const states = {
   completed: ["Completed", "green"], pending: ["Not started", "gray"], skipped: ["Skipped", "gray"],
   error: ["Error", "red"], active: ["In progress", "blue"], closed: ["Closed unfinished", "yellow"],
+  awaiting: ["Awaiting decision", "yellow"], parked: ["Parked (reopenable)", "yellow"],
   unknown: ["Unknown", "gray"],
 };
 const stopped = new Set(["halted", "paused", "cancelled"]);
@@ -31,7 +34,7 @@ function latestAgents(agents) {
   return [...latest.values()];
 }
 
-function phaseState(observed, observation, freshness, currentId, agents, evidence) {
+function phaseState(observed, observation, freshness, currentId, agents, evidence, pendingDecision) {
   if (!observed) return ["unknown", "Runtime history was not recorded for this phase."];
   if (observed.status === "pending") return ["pending", "This phase has not started."];
   if (observed.status === "skipped") return ["skipped", "The runtime skipped this phase."];
@@ -39,6 +42,8 @@ function phaseState(observed, observation, freshness, currentId, agents, evidenc
   if (agents.some((agent) => failed.has(agent.status))) return ["error", "An agent in this phase failed."];
   if (agents.some((agent) => stopped.has(agent.status))) return ["closed", "An agent stopped before this phase finished."];
   if (observed.status === "active" && stopped.has(observation.status)) {
+    if (observation.status === "paused" && pendingDecision?.kind === "parked") return ["parked", "The run is parked and can be reopened or closed."];
+    if (observation.status === "paused" && pendingDecision) return ["awaiting", "The run is paused until a human decision is submitted."];
     return ["closed", `The run was ${observation.status} before this phase finished.`];
   }
   if (observed.status === "active") {
@@ -77,7 +82,7 @@ export function buildPhaseModel(run, definitions, metadata = {}) {
       const value = metadata[name];
       return value ? [value, value.output] : [];
     });
-    const [state, reason] = phaseState(observed, observation, run.freshness, currentId, agents, evidence);
+    const [state, reason] = phaseState(observed, observation, run.freshness, currentId, agents, evidence, run.pendingDecision);
     const [status, color] = states[state];
     return {
       key: key(definition.title), title: definition.title, detail: definition.detail,

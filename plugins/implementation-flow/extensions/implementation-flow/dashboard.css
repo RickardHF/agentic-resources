@@ -24,9 +24,9 @@ h1 { font-size: 18px; font-weight: 650; letter-spacing: -.025em; }
 h2 { font-size: 16px; font-weight: 650; }
 h3 { font-size: 15px; font-weight: 600; }
 a { color: var(--focus); overflow-wrap: anywhere; }
-button, select { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-height: 36px; padding: 7px 12px; }
+button, select, input, textarea { font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; min-height: 36px; padding: 7px 12px; }
 button { cursor: pointer; transition: background-color 150ms ease-out, border-color 150ms ease-out; }
-button:hover, select:hover { background: var(--soft); border-color: var(--strong-border); }
+button:hover, select:hover, input:hover, textarea:hover { border-color: var(--strong-border); }
 button:active { background: color-mix(in srgb, var(--text) 9%, var(--surface)); }
 button:disabled, select:disabled { opacity: .55; cursor: default; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
@@ -70,6 +70,23 @@ main { min-width: 0; padding: 28px 32px 40px; max-width: 1320px; width: 100%; ma
 .run-note > summary { display: flex; align-items: center; gap: 7px; }
 .run-note .icon { width: 15px; height: 15px; }
 .run-note p { margin: 8px 0 0 22px; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 75ch; }
+.control-panel { margin-top: 20px; padding: 18px 20px; background: var(--canvas); border: 1px solid var(--border); border-radius: 9px; }
+.control-panel > h2 { font-size: 15px; margin-bottom: 12px; }
+.control-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.control-actions button { min-height: 34px; font-size: 12px; }
+.decision-panel, .feedback-panel, .history-panel, .start-panel { display: block; margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--border); }
+.decision-panel > h3, .history-panel h3 { font-size: 13px; margin-bottom: 6px; }
+.decision-panel > .markdown { overflow-wrap: anywhere; margin: 8px 0 14px; }
+.control-field { display: grid; gap: 5px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.control-field input, .control-field textarea { width: 100%; color: var(--text); font-size: 12px; }
+.control-field textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
+.control-field textarea:focus-visible, .control-field input:focus-visible, select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.control-status { color: var(--red); margin-top: 10px; font-size: 12px; white-space: pre-wrap; }
+.confirm-field { display: flex; align-items: flex-start; gap: 8px; margin-top: 12px; color: var(--muted); font-size: 12px; }
+.confirm-field input { width: 16px; height: 16px; min-height: 16px; margin: 2px 0 0; padding: 0; accent-color: var(--blue); }
+.history-panel > select { max-width: 100%; margin: 10px 8px 0 0; font-size: 11px; }
+.history-preview { max-height: 260px; margin-top: 12px; }
+.feedback-panel > summary, .history-panel > summary, .start-panel > summary { font-size: 12px; font-weight: 600; }
 summary { cursor: pointer; }
 .run-note > summary::-webkit-details-marker, .artifact-summary::-webkit-details-marker, .activity-disclosure > summary::-webkit-details-marker { display: none; }
 .workflow-section { margin-top: 25px; padding: 20px 20px 16px; background: var(--canvas); border: 1px solid var(--border); border-radius: 10px; }
@@ -264,6 +281,8 @@ th { background: var(--canvas); font-weight: 600; }
   .document-header { flex-direction: column; gap: 5px; }
   .document-header h3 { font-size: 18px; }
   .document-updated { padding-top: 0; }
+  .control-panel { margin-inline: -4px; padding: 16px 13px; }
+  .history-panel > select { width: 100%; margin-right: 0; }
   .changed-file { gap: 12px; }
   .diff-header { gap: 9px; padding: 10px; }
   #connection { margin-inline: 20px; }

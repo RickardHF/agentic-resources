@@ -17,6 +17,9 @@ const contracts = {
   "decision-gate.json": ["Decision gate", { maximumRecommendation: "string", failures: "array", uncertainties: "array" }],
   "summary.json": ["Synthesis", { recommendation: "string", summary: "string", rationale: "array", findings: "array", remainingRisks: "array", nextSteps: "array" }],
   "review-snapshot.json": ["Reviewed checkout", { branch: "string", head: "string", fingerprint: "string", changedFiles: "array", note: "string" }],
+  "feedback.json": ["Human feedback", { entries: "array" }],
+  "pending-decision.json": ["Pending human decision", { key: "string", kind: "string", message: "string", options: "array" }],
+  "issue-delta.json": ["GitHub issue updates", { title: "nullable-object", body: "nullable-object", comments: "array" }],
 };
 const implementation = { status: "string", summary: "string", changes: "array", checks: "array", deviations: "array", blockers: "array" };
 const review = { verdict: "string", summary: "string", coverage: "array", findings: "array", checks: "array", criteria: "array" };
@@ -48,6 +51,13 @@ export function describeArtifact(name, value) {
     warnings = check(value, isObject(value) && value.stage === "plan"
       ? { recommendation: "string", stage: "string", blockers: "array", artifacts: "string" }
       : { recommendation: "string", ...(isObject(value) && Object.hasOwn(value, "taskTitle") ? { taskTitle: "string" } : { issueUrl: "string" }), branch: "string", baseSha: "string", reviewedFingerprint: "string", changedFiles: "array", artifacts: "string", gate: "object", synthesis: "object", reviewAvailability: "object" });
+  } else if (name === "verification.json") {
+    title = "Independent verification evidence";
+    warnings = Array.isArray(value)
+      ? value.slice(0, 100).flatMap((entry, index) => check(entry, {
+        id: "string", description: "string", outcome: "string", evidence: "string", source: "string",
+      }, `[${index}].`))
+      : ["Verification evidence must be an array."];
   } else if (name === "untracked-files.json") {
     title = "New-file manifest";
     warnings = Array.isArray(value)

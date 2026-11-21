@@ -424,7 +424,10 @@ export function renderChangedFiles(doc, paths, evidence = {}) {
   node.append(list);
   const parsed = typeof evidence.patch === "string" ? parsePatch(evidence.patch) : null;
   if (parsed?.error || parsed?.limited) node.append(element(doc, "p", "Patch evidence is incomplete or unsupported; some file statuses may be unavailable. Inspect Source changes / Raw.", "notice"));
-  if (Array.isArray(evidence.manifest) && evidence.manifest.length) node.append(element(doc, "p", "New-file paths were recorded, but their contents were not captured in the patch.", "muted"));
+  const inPatch = new Set(parsed && !parsed.error ? parsed.files.map((file) => file.path) : []);
+  if (Array.isArray(evidence.manifest) && evidence.manifest.some((entry) => typeof entry?.path === "string" && !inPatch.has(entry.path))) {
+    node.append(element(doc, "p", "New-file paths were recorded, but their contents were not captured in the patch.", "muted"));
+  }
   return node;
 }
 
@@ -482,7 +485,7 @@ export function renderPatch(doc, text) {
     if (text.length > 100_000) node.append(element(doc, "p", "Text preview limited. Use Raw for the full patch.", "notice"));
     return node;
   }
-  if (!parsed.files.length) node.append(element(doc, "p", "No tracked-file changes recorded. New-file contents are not included in this patch.", "muted"));
+  if (!parsed.files.length) node.append(element(doc, "p", "No file changes recorded in this patch.", "muted"));
   if (parsed.limited) node.append(element(doc, "p", "Diff preview limited. Raw contains the full patch.", "notice"));
   for (const file of parsed.files) {
     const group = element(doc, "details", undefined, "diff-file"); group.open = true;

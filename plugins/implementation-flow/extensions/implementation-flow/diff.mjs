@@ -116,5 +116,6 @@ export function changedFileStatuses(paths, patch, manifest) {
   const added = new Set(Array.isArray(manifest) ? manifest.filter((entry) => entry && typeof entry.path === "string").map((entry) => entry.path) : []);
   const recordedPaths = parsed && !parsed.error ? parsed.files.map((file) => file.path) : [];
   return [...new Set([...paths.filter((entry) => typeof entry === "string"), ...recordedPaths, ...added])]
-    .map((path) => ({ path, status: added.has(path) ? "added" : statuses.get(path) ?? "unclassified" }));
+    // Patch evidence wins; older runs recorded new files only in the manifest.
+    .map((path) => ({ path, status: statuses.get(path) ?? (added.has(path) ? "added" : "unclassified") }));
 }

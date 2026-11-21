@@ -55,7 +55,7 @@ test("Claude compatibility preserves engineering-team without advertising Copilo
     await readJson("plugins/engineering-team/.claude-plugin/plugin.json"),
   );
   const delivery = await readJson("plugins/implementation-flow/plugin.json");
-  assert.equal(delivery.version, "1.0.0");
+  assert.equal(delivery.version, "1.2.0");
   assert.deepEqual(delivery.extensions, ["./extensions"]);
   assert.equal(delivery.$schema, undefined, "SDK extension paths require the Copilot-specific manifest");
 });

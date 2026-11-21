@@ -10,6 +10,7 @@ import { buildPhaseModel } from "./phase-model.mjs";
 
 export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const isArtifact = (name) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(json|md|patch|txt)$/.test(name) && !name.includes("..");
+const isStoredArtifact = (name) => isArtifact(name) || /^iterations\/(?:0|[1-9][0-9]*)(?:\/reruns\/(?:0|[1-9][0-9]*))?\/[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(json|md|patch|txt)$/.test(name);
 export class ReadError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
@@ -35,10 +36,26 @@ export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTE
     if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(dir) !== dir) throw new ReadError("Run directory must not be a symlink.", 403);
     return dir;
   };
-  const readText = async (runId, name) => {
-    if (!isArtifact(name)) throw new ReadError("Invalid artifact filename.");
+  const artifactLocation = async (runId, name) => {
+    if (!isStoredArtifact(name)) throw new ReadError("Invalid artifact filename.");
     const dir = await runDirectory(runId);
-    const handle = await fs.open(path.join(dir, name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    if (isArtifact(name)) return { dir, location: path.join(dir, name) };
+    const match = /^iterations\/((?:0|[1-9][0-9]*))(?:\/reruns\/((?:0|[1-9][0-9]*)))?\/([A-Za-z0-9][A-Za-z0-9._-]{0,127}\.(?:json|md|patch|txt))$/.exec(name);
+    if (!match) throw new ReadError("Invalid artifact path.");
+    const directories = [path.join(dir, "iterations", match[1])];
+    if (match[2] !== undefined) directories.push(path.join(directories[0], "reruns", match[2]));
+    for (const directory of directories) {
+      const stat = await fs.lstat(directory);
+      if (!stat.isDirectory() || stat.isSymbolicLink() || await fs.realpath(directory) !== directory) {
+        throw new ReadError("Artifact directory must not be a symlink.", 403);
+      }
+    }
+    if (!isArtifact(match[3])) throw new ReadError("Invalid artifact filename.");
+    return { dir, location: path.join(directories.at(-1), match[3]) };
+  };
+  const readText = async (runId, name) => {
+    const { location } = await artifactLocation(runId, name);
+    const handle = await fs.open(location, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     try {
       const stat = await handle.stat();
       if (!stat.isFile()) throw new ReadError("Artifact is not a regular file.", 403);
@@ -79,9 +96,44 @@ export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTE
         warnings.push(`${entry.name}: removed during refresh.`);
       }
     }
+    const iterations = path.join(dir, "iterations");
+    try {
+      for (const iteration of await fs.readdir(iterations, { withFileTypes: true })) {
+        if (!iteration.isDirectory() || !/^(?:0|[1-9][0-9]*)$/.test(iteration.name)) continue;
+        const iterationPath = path.join(iterations, iteration.name);
+        if (await fs.realpath(iterationPath) !== iterationPath) { warnings.push(`iterations/${iteration.name}: symlink directory; not exposed.`); continue; }
+        const collect = async (directory, prefix, depth) => {
+          for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+            if (entry.isFile() && isArtifact(entry.name)) {
+              const name = `${prefix}/${entry.name}`;
+              try {
+                const stat = await fs.lstat(path.join(directory, entry.name));
+                if (!stat.isFile()) { warnings.push(`${name}: changed file type; not exposed.`); continue; }
+                artifacts.push({ name, size: stat.size, modifiedAt: stat.mtimeMs, tooLarge: stat.size > maxFileBytes });
+              } catch (error) {
+                if (error.code !== "ENOENT") throw error;
+                warnings.push(`${name}: removed during refresh.`);
+              }
+            } else if (depth === 0 && entry.isDirectory() && entry.name === "reruns") {
+              const reruns = path.join(directory, entry.name);
+              if (await fs.realpath(reruns) !== reruns) { warnings.push(`${prefix}/reruns: symlink directory; not exposed.`); continue; }
+              for (const rerun of await fs.readdir(reruns, { withFileTypes: true })) {
+                if (!rerun.isDirectory() || !/^(?:0|[1-9][0-9]*)$/.test(rerun.name)) continue;
+                const rerunPath = path.join(reruns, rerun.name);
+                if (await fs.realpath(rerunPath) !== rerunPath) { warnings.push(`${prefix}/reruns/${rerun.name}: symlink directory; not exposed.`); continue; }
+                await collect(rerunPath, `${prefix}/reruns/${rerun.name}`, 1);
+              }
+            }
+          }
+        };
+        await collect(iterationPath, `iterations/${iteration.name}`, 0);
+      }
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
     artifacts.sort((a, b) => a.name.localeCompare(b.name));
     const metadata = {};
-    for (const name of ["dashboard.json", "context.json", "issue.json", "task.json", "result.json", "plan.json", "implementation.json", "requirements-review.json", "quality-security-review.json"]) {
+    for (const name of ["dashboard.json", "context.json", "issue.json", "task.json", "result.json", "plan.json", "implementation.json", "requirements-review.json", "quality-security-review.json", "pending-decision.json", "verification.json", "issue-delta.json"]) {
       if (!artifacts.some((artifact) => artifact.name === name)) continue;
       try {
         const artifact = await readArtifact(runId, name);
@@ -106,11 +158,69 @@ export function createStore(root, { now = Date.now, maxFileBytes = MAX_FILE_BYTE
       branch: typeof context?.branch === "string" ? context.branch : typeof result?.branch === "string" ? result.branch : null,
       recommendation: ["successful", "unsuccessful", "inconclusive"].includes(result?.recommendation) ? result.recommendation : null,
       observation, freshness: freshness(observation, now()), modifiedAt, artifacts, warnings,
+      pendingDecision: isObject(metadata["pending-decision.json"]) ? metadata["pending-decision.json"] : null,
     };
     return { ...run, ...buildPhaseModel(run, meta.phases, metadata) };
   };
   return {
     readArtifact, getRun,
+    async writeInbox(runId, entry) {
+      if (!isObject(entry) || typeof entry.key !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(entry.key) ||
+          typeof entry.action !== "string" || typeof entry.id !== "string" ||
+          entry.feedback !== undefined && typeof entry.feedback !== "string" ||
+          entry.plan !== undefined && !isObject(entry.plan)) throw new ReadError("Invalid inbox response.");
+      const dir = await runDirectory(runId);
+      const inbox = path.join(dir, "inbox");
+      await fs.mkdir(inbox, { recursive: true, mode: 0o700 });
+      if (await fs.realpath(inbox) !== inbox || !(await fs.lstat(inbox)).isDirectory()) throw new ReadError("Inbox directory is not canonical.", 403);
+      const target = path.join(inbox, `${entry.key}.json`);
+      const temporary = path.join(inbox, `.${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(temporary, JSON.stringify(entry, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+        await fs.link(temporary, target);
+      } catch (error) {
+        if (error.code === "EEXIST") throw new ReadError("A response is already queued for this decision.", 409);
+        throw error;
+      } finally { await fs.rm(temporary, { force: true }); }
+    },
+    async queueFeedback(runId, feedback, source = "chat") {
+      if (typeof feedback !== "string" || !feedback.trim() || feedback.length > 4_000 ||
+          typeof source !== "string" || !source.trim()) throw new ReadError("Feedback must be nonempty and at most 4000 characters.");
+      const dir = await runDirectory(runId);
+      const inbox = path.join(dir, "inbox");
+      await fs.mkdir(inbox, { recursive: true, mode: 0o700 });
+      if (await fs.realpath(inbox) !== inbox || !(await fs.lstat(inbox)).isDirectory()) throw new ReadError("Inbox directory is not canonical.", 403);
+      const id = randomUUID();
+      const entry = { id, feedback: feedback.trim(), source, createdAt: now() };
+      const target = path.join(inbox, `feedback-${id}.json`);
+      const temporary = path.join(inbox, `.${id}.tmp`);
+      try {
+        await fs.writeFile(temporary, JSON.stringify(entry, null, 2) + "\n", { mode: 0o600, flag: "wx" });
+        await fs.link(temporary, target);
+      } finally { await fs.rm(temporary, { force: true }); }
+      return entry;
+    },
+    async appendVerification(runId, entry) {
+      if (!isObject(entry) || typeof entry.id !== "string" || !entry.id.trim() ||
+          entry.criterionId !== undefined && typeof entry.criterionId !== "string" ||
+          typeof entry.description !== "string" || !entry.description.trim() ||
+          entry.command !== undefined && typeof entry.command !== "string" ||
+          !["passed", "failed"].includes(entry.outcome) || typeof entry.evidence !== "string" || !entry.evidence.trim() ||
+          typeof entry.source !== "string" || !entry.source.trim()) throw new ReadError("Invalid verification evidence.");
+      const dir = await runDirectory(runId);
+      let existing = [];
+      try {
+        existing = JSON.parse(await readText(runId, "verification.json"));
+        if (!Array.isArray(existing)) throw new ReadError("Existing verification evidence must be an array.", 409);
+      } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (existing.some((item) => item?.id === entry.id)) throw new ReadError("Verification evidence id already exists.", 409);
+      const target = path.join(dir, "verification.json");
+      const temporary = path.join(dir, `.verification-${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(temporary, JSON.stringify([...existing, entry], null, 2) + "\n", { mode: 0o600, flag: "wx" });
+        await fs.rename(temporary, target);
+      } finally { await fs.rm(temporary, { force: true }); }
+    },
     async listRuns() {
       try { await verifyRoot(); }
       catch (error) { if (error.code === "ENOENT") return []; throw error; }

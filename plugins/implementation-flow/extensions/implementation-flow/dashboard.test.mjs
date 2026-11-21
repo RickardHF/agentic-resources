@@ -11,7 +11,7 @@ import { describeArtifact, freshness, observationFromDetail, validObservation, M
 import { startObserver } from "./observer.mjs";
 import { createDashboardCanvas, startDashboardServer } from "./dashboard.mjs";
 import * as renderer from "./renderer.mjs";
-import { badge, inlineTokens, markdownBlocks, renderArtifact, renderCheckout, renderPatch, safeLink } from "./renderer.mjs";
+import { badge, inlineTokens, markdownBlocks, renderArtifact, renderChangedFiles, renderCheckout, renderPatch, safeLink } from "./renderer.mjs";
 import { changedFileStatuses, gitPath, parsePatch } from "./diff.mjs";
 import { buildPhaseModel } from "./phase-model.mjs";
 import { meta } from "./workflow.mjs";
@@ -52,8 +52,9 @@ async function fixture(t, options) {
   return {
     root, artifactRoot, store: createStore(artifactRoot, options),
     async write(name, value, id = runId) {
-      await fs.mkdir(path.join(artifactRoot, id), { recursive: true });
-      await fs.writeFile(path.join(artifactRoot, id, name), typeof value === "string" ? value : JSON.stringify(value));
+      const location = path.join(artifactRoot, id, name);
+      await fs.mkdir(path.dirname(location), { recursive: true });
+      await fs.writeFile(location, typeof value === "string" ? value : JSON.stringify(value));
     },
   };
 }
@@ -179,12 +180,12 @@ test("every known artifact belongs to its producing phase; future files stay ins
     ["issue.json", "context.json"], ["plan.json"],
     ["implementation.json", "changes.patch"],
     ["requirements-review.json", "quality-security-review.json"],
-    ["report.md", "result.json", "summary.json", "decision-gate.json"],
+    ["report.md", "result.json", "summary.json", "decision-gate.json", "verification.json"],
   ];
-  for (const name of [...expected.flat(), "future.json", "dashboard.json", "untracked-files.json", "review-snapshot.json"]) await f.write(name, "{}");
+  for (const name of [...expected.flat(), "future.json", "dashboard.json", "untracked-files.json", "review-snapshot.json", "pending-decision.json", "issue-delta.json"]) await f.write(name, "{}");
   const run = await f.store.getRun(runId);
   assert.deepEqual(run.phases.map((phase) => phase.artifacts.map((entry) => entry.name)), expected);
-  assert.deepEqual(run.runArtifacts.map((entry) => entry.name), ["dashboard.json", "future.json", "untracked-files.json"]);
+  assert.deepEqual(run.runArtifacts.map((entry) => entry.name), ["dashboard.json", "future.json", "issue-delta.json", "pending-decision.json", "untracked-files.json"]);
   assert.equal(run.phases[2].checkout.name, "review-snapshot.json");
   assert.equal(run.phases[2].artifacts[1].format, "Patch");
   assert.equal(run.phases[4].artifacts[0].format, "Markdown");
@@ -233,6 +234,20 @@ test("paused, halted, cancelled and prematurely closed phases are yellow, not co
   run.observation.status = "paused";
   run.observation.phases[2].status = "completed";
   assert.equal(buildPhaseModel(run, meta.phases).phases[2].state, "completed");
+});
+
+test("paused checkpoints distinguish decisions from parked reopenable runs", () => {
+  const run = phaseRun({ pendingDecision: { kind: "plan-approval" } });
+  run.observation.status = "paused";
+  assert.deepEqual(
+    [buildPhaseModel(run, meta.phases).phases[2].state, buildPhaseModel(run, meta.phases).phases[2].status],
+    ["awaiting", "Awaiting decision"],
+  );
+  run.pendingDecision.kind = "parked";
+  assert.deepEqual(
+    [buildPhaseModel(run, meta.phases).phases[2].state, buildPhaseModel(run, meta.phases).phases[2].status],
+    ["parked", "Parked (reopenable)"],
+  );
 });
 
 test("blocked planning and unavailable or malformed agent output are closed unfinished", () => {
@@ -402,6 +417,36 @@ test("traversal, symlink files/directories and oversized reads are rejected", as
   assert.equal((await f.store.listRuns()).length, 1);
 });
 
+test("iteration and rerun artifacts are readable only through canonical subdirectories", async (t) => {
+  const f = await fixture(t);
+  await f.write("iterations/1/plan-rejected-1.json", readyPlan);
+  await f.write("iterations/1/reruns/2/summary.json", { recommendation: "successful" });
+  const run = await f.store.getRun(runId);
+  assert.ok(run.artifacts.some((artifact) => artifact.name === "iterations/1/plan-rejected-1.json"));
+  assert.ok(run.artifacts.some((artifact) => artifact.name === "iterations/1/reruns/2/summary.json"));
+  assert.equal((await f.store.readArtifact(runId, "iterations/1/plan-rejected-1.json")).value.goal, readyPlan.goal);
+  await assert.rejects(f.store.readArtifact(runId, "iterations/../plan.json"), /Invalid artifact/);
+  await assert.rejects(f.store.readArtifact(runId, "iterations/1/../../plan.json"), /Invalid artifact/);
+});
+
+test("store atomically queues one decision and validates later verification evidence", async (t) => {
+  const f = await fixture(t);
+  await f.write("context.json", {});
+  const response = { id: "answer-1", key: "approval-v1", action: "approve", feedback: "" };
+  await f.store.writeInbox(runId, response);
+  await assert.rejects(f.store.writeInbox(runId, { ...response, id: "answer-2" }), /already queued/);
+  await f.store.queueFeedback(runId, "Please also test mobile.", "chat");
+  await f.store.appendVerification(runId, {
+    id: "browser-check", criterionId: "AC1", description: "Browser test", outcome: "passed",
+    evidence: "Rendered as expected.", source: "browser",
+  });
+  await assert.rejects(f.store.appendVerification(runId, {
+    id: "browser-check", description: "Duplicate", outcome: "failed", evidence: "No.", source: "browser",
+  }), /already exists/);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.artifactRoot, runId, "inbox", "approval-v1.json"), "utf8")), response);
+  assert.equal(JSON.parse(await fs.readFile(path.join(f.artifactRoot, runId, "verification.json"), "utf8"))[0].outcome, "passed");
+});
+
 test("observer records initial/terminal/resumed state and same-revision live heartbeat", async (t) => {
   const f = await fixture(t);
   const r = runtime();
@@ -521,6 +566,63 @@ test("loopback server serves assets and read-only APIs behind a private capabili
   assert.equal((await fetch(new URL("api/artifact?runId=..&name=config", server.url))).status, 400);
 });
 
+test("mutation endpoints enforce same-origin headers and owner-scoped pending decisions", async (t) => {
+  const f = await fixture(t);
+  await f.write("dashboard.json", observation());
+  await f.write("pending-decision.json", {
+    key: "plan-approval-v1", kind: "plan-approval",
+    options: [{ label: "Approve", action: "approve" }],
+  });
+  const calls = [];
+  const session = {
+    sessionId: "owner-session",
+    workflow: {
+      resume: async (...args) => { calls.push(["resume", ...args]); },
+      pause: async (...args) => { calls.push(["pause", ...args]); },
+      cancel: async (...args) => { calls.push(["cancel", ...args]); },
+      run: async (...args) => { calls.push(["run", ...args]); },
+    },
+  };
+  const server = await startDashboardServer(f.store, { session });
+  t.after(() => server.close());
+  const endpoint = new URL("api/respond", server.url);
+  const payload = JSON.stringify({ runId, action: "approve" });
+  assert.equal((await fetch(endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload })).status, 415);
+  assert.equal((await fetch(endpoint, { method: "POST", headers: { "X-Implementation-Flow": "1", "Content-Type": "application/json", "Sec-Fetch-Site": "cross-site" }, body: payload })).status, 403);
+  const accepted = await fetch(endpoint, {
+    method: "POST", headers: { "X-Implementation-Flow": "1", "Content-Type": "application/json" }, body: payload,
+  });
+  assert.equal(accepted.status, 202);
+  assert.deepEqual(calls, [["resume", runId, { notifyOnComplete: true }]]);
+  assert.equal(JSON.parse(await fs.readFile(path.join(f.artifactRoot, runId, "inbox", "plan-approval-v1.json"), "utf8")).action, "approve");
+
+  await fs.unlink(path.join(f.artifactRoot, runId, "pending-decision.json"));
+  await f.write("dashboard.json", observation({ status: "paused" }));
+  const feedback = await fetch(new URL("api/feedback", server.url), {
+    method: "POST", headers: { "X-Implementation-Flow": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({ runId, feedback: "Preserve the public API" }),
+  });
+  assert.equal(feedback.status, 202);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][0], "resume");
+  assert.match((await fs.readdir(path.join(f.artifactRoot, runId, "inbox"))).join(), /feedback-/);
+
+  await f.write("pending-decision.json", {
+    key: "parked-1", kind: "parked", options: [{ label: "Re-decide", action: "evidence" }],
+  });
+  const evidence = await fetch(new URL("api/evidence", server.url), {
+    method: "POST", headers: { "X-Implementation-Flow": "1", "Content-Type": "application/json" },
+    body: JSON.stringify({
+      runId, id: "browser", description: "Browser check", outcome: "passed", evidence: "Rendered correctly.",
+    }),
+  });
+  assert.equal(evidence.status, 202);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(f.artifactRoot, runId, "verification.json"), "utf8")), [{
+    id: "browser", description: "Browser check", outcome: "passed", evidence: "Rendered correctly.", source: "dashboard",
+  }]);
+});
+
 test("server surfaces storage errors instead of a success-shaped empty response", async (t) => {
   const errors = [];
   const server = await startDashboardServer({ listRuns: async () => { throw new Error("Cannot read storage"); } }, { reportError: (error) => errors.push(error.message) });
@@ -531,12 +633,14 @@ test("server surfaces storage errors instead of a success-shaped empty response"
   assert.deepEqual(errors, ["Cannot read storage"]);
 });
 
-test("canvas reopening is idempotent and all actions are observational", async (t) => {
+test("canvas reopening is idempotent and exposes supported workflow controls", async (t) => {
   const f = await fixture(t);
   const dashboard = createDashboardCanvas((options) => options, f.store);
   t.after(() => dashboard.close());
   assert.equal(dashboard.canvas.id, "implementation-flow-runs");
-  assert.deepEqual(dashboard.canvas.actions.map((action) => action.name), ["list_runs"]);
+  assert.deepEqual(dashboard.canvas.actions.map((action) => action.name), [
+    "list_runs", "respond", "add_feedback", "attach_evidence", "start", "pause", "resume", "cancel",
+  ]);
   const [first, second] = await Promise.all([
     dashboard.canvas.open({ instanceId: "panel-1" }), dashboard.canvas.open({ instanceId: "panel-1" }),
   ]);
@@ -561,11 +665,16 @@ test("safe Markdown supports report tables, code, lists and links without HTML e
   assert.equal(inlineTokens("<img src=x onerror=alert(1)>")[0].type, "text");
 });
 
-test("entrypoint preserves workflow registration and contributes no mutation tools", async () => {
+test("entrypoint registers workflow tools for pending decisions, feedback and evidence", async () => {
   const source = await fs.readFile(new URL("extension.mjs", import.meta.url), "utf8");
   assert.match(source, /workflows: \[defineWorkflow\(\{ meta, run \}\)\]/);
   assert.match(source, /canvases: \[dashboard.canvas\]/);
-  assert.doesNotMatch(source, /onPermissionRequest|requestedEnvironmentVariables|tools:/);
+  assert.match(source, /tools,/);
+  assert.match(source, /implementation_flow_pending/);
+  assert.match(source, /implementation_flow_respond/);
+  assert.match(source, /implementation_flow_feedback/);
+  assert.match(source, /implementation_flow_attach_evidence/);
+  assert.doesNotMatch(source, /onPermissionRequest|requestedEnvironmentVariables/);
   assert.equal(path.basename(await resolveArtifactRoot()), "implementation-flow");
 });
 
@@ -576,7 +685,7 @@ test("entrypoint joins with both contributions and cleans up observer and canvas
   const signals = new Map();
   const source = (await fs.readFile(new URL("extension.mjs", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
   await vm.runInNewContext(`(async () => { ${source} })()`, {
-    createCanvas: (options) => options, defineWorkflow: (options) => options,
+    createCanvas: (options) => options, defineWorkflow: (options) => options, randomUUID: () => "test-id",
     joinSession: async (options) => { joined = options; return r.session; },
     createStore, resolveArtifactRoot: async () => f.artifactRoot, startObserver,
     logError: async () => {}, createDashboardCanvas, meta: { name: "implementation-flow" }, run: async () => {},
@@ -584,6 +693,9 @@ test("entrypoint joins with both contributions and cleans up observer and canvas
   });
   assert.equal(joined.workflows[0].meta.name, "implementation-flow");
   assert.equal(joined.canvases[0].id, "implementation-flow-runs");
+  assert.deepEqual(JSON.parse(JSON.stringify(joined.tools.map(({ name }) => name))), [
+    "implementation_flow_pending", "implementation_flow_respond", "implementation_flow_feedback", "implementation_flow_attach_evidence",
+  ]);
   const panel = await joined.canvases[0].open({ instanceId: "wired-panel" });
   assert.equal((await fetch(panel.url)).status, 200);
   assert.equal(r.listenerCount, 1);
@@ -737,6 +849,22 @@ test("implementation renders status-colored files before a property-heading-free
   assert.match(node.textContent, /contents were not captured/);
 });
 
+test("patches that include new files take precedence over the new-file manifest", () => {
+  const withNewFiles = [
+    patch.trimEnd(),
+    "diff --git a/new.ts b/new.ts", "new file mode 100644", "index 0000000..abc",
+    "--- /dev/null", "+++ b/new.ts", "@@ -0,0 +1 @@", "+created",
+    "diff --git a/scratch.txt b/scratch.txt", "index abc..def 100644",
+    "--- a/scratch.txt", "+++ b/scratch.txt", "@@ -1 +1 @@", "-wip", "+edited", "",
+  ].join("\n");
+  const node = renderChangedFiles(testDocument(), ["src/feature.ts", "new.ts", "scratch.txt"],
+    { patch: withNewFiles, manifest: [{ path: "new.ts" }, { path: "scratch.txt" }] });
+  assert.deepEqual(node.querySelectorAll(".changed-file").map((row) => [row.firstChild.textContent, row.dataset.change]), [
+    ["src/feature.ts", "modified"], ["new.ts", "added"], ["scratch.txt", "modified"], ["removed.ts", "deleted"],
+  ]);
+  assert.doesNotMatch(node.textContent, /contents were not captured/);
+});
+
 test("both reviewers show output alone with finding details and no wrapper/property headings", () => {
   for (const name of ["requirements-review.json", "quality-security-review.json"]) {
     const node = renderArtifact(testDocument(), name, { available: true, output: reviewOutput });
@@ -825,7 +953,7 @@ test("Git diff metadata handles added, renamed, copied, binary, mode-only and qu
   assert.equal(parsePatch("diff --git a/a b/a\n@@ -1,2 +1 @@\n-old\n+new\n").error, "Incomplete unified diff hunk.");
   assert.equal(parsePatch("diff --git a/a b/a\n@@ -1 +1 @@\n-old\n+new\n+extra\n").error, "Diff lines exceed the recorded hunk range.");
   assert.match(renderPatch(testDocument(), "unsupported patch").textContent, /Cannot preview this patch/);
-  assert.match(renderPatch(testDocument(), "").textContent, /No tracked-file changes/);
+  assert.match(renderPatch(testDocument(), "").textContent, /No file changes recorded/);
   assert.deepEqual(changedFileStatuses(["unknown.ts"], null, null), [{ path: "unknown.ts", status: "unclassified" }]);
   assert.equal(changedFileStatuses(["src/feature.ts"], "invalid", null)[0].status, "unclassified");
   assert.deepEqual(changedFileStatuses(["new name.ts"], source, []).filter((entry) => entry.status === "renamed"),
@@ -869,7 +997,7 @@ test("preview budgets bound cumulative Markdown, comment counts, rows and patch 
   }
 });
 
-async function dashboardClient(t, records, runIds = ["client-run"]) {
+async function dashboardClient(t, records, runIds = ["client-run"], runOverrides = {}) {
   const doc = testDocument();
   const html = await fs.readFile(new URL("dashboard.html", import.meta.url), "utf8");
   const nodes = new Map([...html.matchAll(/id="([^"]+)"/g)].map(([, id]) => [id, doc.createElement("div")]));
@@ -880,10 +1008,11 @@ async function dashboardClient(t, records, runIds = ["client-run"]) {
   let interval;
   const run = (id) => {
     const artifacts = [...records].map(([name, value]) => ({ name, size: value.text.length, modifiedAt: value.version ?? 1 }));
-    return {
+    const value = {
       runId: id, title: id, branch: "main", freshness: "artifact-only", observation: null, recommendation: null,
-      warnings: [], artifacts, ...buildPhaseModel({ artifacts, observation: null, freshness: "artifact-only" }, meta.phases),
+      warnings: [], artifacts, ...runOverrides,
     };
+    return { ...value, ...buildPhaseModel(value, meta.phases) };
   };
   const source = (await fs.readFile(new URL("dashboard.js", import.meta.url), "utf8")).replace(/^import .*;\n/gm, "");
   const client = {
@@ -900,8 +1029,12 @@ async function dashboardClient(t, records, runIds = ["client-run"]) {
     ...renderer, document: doc, location: { href: "http://127.0.0.1/panel/" }, URL, AbortSignal,
     setInterval: (callback) => { interval = callback; return 1; }, clearInterval: () => {},
     window: { addEventListener: () => {} },
-    fetch: async (url) => {
+    fetch: async (url, options = {}) => {
       const route = url.pathname.split("/").at(-1); calls.push([route, url.searchParams.get("name")]);
+      if (options.method === "POST") {
+        calls.at(-1)[1] = JSON.parse(options.body);
+        return { ok: true, json: async () => ({ queued: true }) };
+      }
       if (route === "runs") return { ok: true, json: async () => ({ runs: runIds.map(run), observer: { errors: [] } }) };
       if (route === "run") return { ok: true, json: async () => run(url.searchParams.get("runId")) };
       const name = url.searchParams.get("name");
@@ -931,6 +1064,31 @@ test("dashboard labels the review lane for both task and issue requirements", as
   await client.phase("review");
   assert.match(client.nodes.get("review-branches").textContent, /Requirement coverage/);
   assert.match(client.nodes.get("review-branches").textContent, /Quality & security/);
+});
+
+test("dashboard renders actionable decisions, inline comments, plan editing and evidence submission", async (t) => {
+  const records = clientRecords();
+  records.set("plan.json", { text: JSON.stringify(readyPlan) });
+  const client = await dashboardClient(t, records, ["client-run"], {
+    pendingDecision: {
+      kind: "plan-approval", message: "## Plan ready for approval\n\n**Goal:** Verify `movement`.\n\n- Check gravity\n- Check collision",
+      options: [{ label: "Approve plan", action: "approve" }],
+    },
+  });
+  const controls = client.nodes.get("run-controls");
+  const decision = controls.querySelector(".decision-panel");
+  assert.equal(decision.querySelector("h2")?.textContent, "Plan ready for approval");
+  assert.equal(decision.querySelector("strong")?.textContent, "Goal:");
+  assert.equal(decision.querySelector("code")?.textContent, "movement");
+  assert.deepEqual(decision.querySelectorAll("li").map((item) => item.textContent), ["Check gravity", "Check collision"]);
+  assert.match(controls.textContent, /Comment target/);
+  assert.match(controls.textContent, /Edit plan JSON/);
+  assert.match(controls.textContent, /Attach verification evidence/);
+  const approve = controls.querySelectorAll("button").find((button) => button.textContent === "Approve plan");
+  approve.dispatch("click");
+  await client.settle();
+  const posted = client.calls.find(([route]) => route === "respond");
+  assert.deepEqual(posted[1], { runId: "client-run", action: "approve", feedback: "" , plan: readyPlan });
 });
 
 test("dashboard places checkout above artifacts, relocates manifest, and preserves exact Raw toggles", async (t) => {

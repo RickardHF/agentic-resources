@@ -30,10 +30,36 @@ Invoke with `run_dynamic_workflow` using this name and input. This definition is
 session-scoped, not a GitHub Actions workflow or an app-wide automation. Its source
 is preserved next to this document for inspection and re-registration.
 
-The workflow uses five fresh workflow-agent contexts, not five sidebar sessions.
+The optional `decisionChannel` selects inbox decisions (default) or prompt
+elicitation. Two optional boolean flags control the human checkpoints described
+under [Human approval and iteration](#human-approval-and-iteration):
+
+```json
+{ "issueUrl": "https://github.com/OWNER/REPOSITORY/issues/42", "decisionChannel": "inbox", "autoApprovePlan": true, "autoFinish": true }
+```
+
+`decisionChannel` is `"inbox"` or `"prompt"` and defaults to `"inbox"`.
+`autoApprovePlan` and `autoFinish` default to `false`. Invalid values are rejected.
+
+The workflow uses five fresh workflow-agent contexts per pass, not five sidebar sessions.
 It captures the current branch and HEAD in this repository; it never creates or
-switches branches. Start with a clean checkout and keep other writers out of it
-until the run ends.
+switches branches. Keep other writers out of the checkout until the run ends.
+
+The checkout does not need to be clean. Prepare records the working tree as it
+is, including tracked edits, staged changes and untracked files, as a git tree
+(`baseTree`). It builds the tree from a throwaway copy of the index, so your
+index and files are not touched. It lists the files that already differed from
+HEAD as `preexistingChanges` in `context.json`. Each stage is told that these
+are your changes:
+- The planner treats them as the current code.
+- The implementer must preserve them and leave them unstaged.
+- Reviewers judge only the run's own changes.
+
+After implementation, `changes.patch` is `git diff <baseTree> <current tree>`.
+It contains everything the run changed, including new and binary files, and
+nothing that was already there. `git apply -R changes.patch` undoes the run and
+leaves your earlier work in place. Your staged index must stay as it was. The
+plan-approval prompt and `report.md` mention any pre-existing changes.
 
 1. A read-only planner captures acceptance criteria and an implementation plan.
 2. The sole implementation agent edits and validates the shared checkout.
@@ -59,20 +85,85 @@ Issue runs retain `issue.json`, `context.json`'s `issueRequirementDigest`, and
 `taskTitle`. Both use the same plan, implementation, review and decision contracts,
 including the `requirements-review.json` artifact and agent labels for coverage.
 Task requirements are immutable captured input, so no remote freshness check is
-needed. Issue requirements/comments are still fetched again before synthesis.
+needed. Issue requirements/comments are checked at the review checkpoint. New or
+edited content can be accepted as a refreshed snapshot or ignored; ignoring
+leaves the gate inconclusive.
 
 The workflow does not commit, push, create a PR, modify the GitHub issue, or
 automatically apply review fixes. Source changes remain unstaged on the original
-branch. A blocked plan ends without starting implementation. Failed implementation
-output is recorded explicitly and any partial changes are still reviewed; success
-is disallowed.
+branch. A blocked plan ends without starting implementation unless a human
+clarifies it (see below). Failed implementation output is recorded explicitly and
+any partial changes are still reviewed; success is disallowed.
+
+### Human approval and iteration
+
+By default, decisions use the durable `inbox` channel: the workflow writes a
+`pending-decision.json` artifact and pauses for a dashboard or session-tool
+response. Under **Workflow controls → Decision needed**, the dashboard renders
+decision messages as Markdown using the same safe preview as reports.
+The inbox does not require elicitation support. Set `decisionChannel:
+"prompt"` to use session forms instead. `autoApprovePlan` and `autoFinish` skip
+their checkpoints independently.
+
+**Plan approval** (skipped by `autoApprovePlan: true`). After the planner returns
+a ready plan, the dashboard shows its goal, acceptance criteria and steps with
+the path of `plan.json`. It can also edit the plan JSON before approval; an edit
+must pass the plan contract and is retained as a versioned artifact:
+
+- *Approve plan and implement*: continues. Any note is recorded as feedback.
+- *Request plan changes*: requires a description. The rejected plan is archived as
+  `iterations/<n>/plan-rejected-<k>.json`, then the planner runs again as
+  `1-plan #<k+1>` with the rejected plan and your feedback, and the approval dialog
+  repeats. There is no limit on the number of revisions.
+- *Stop (do not implement)*, or dismissing the dialog: ends the run with an
+  `inconclusive` result at `stage: "plan"` and changes nothing.
+
+If planning returns **blocked**, a human run offers *Provide clarification and
+re-plan* (requires text) or *Stop*; with `autoApprovePlan: true` the run ends
+with the blockers as before.
+
+**After review** (skipped by `autoFinish: true`). Once the report is written the
+dialog shows the recommendation and offers:
+
+- *Finish* parks the run so it can be reopened later. *Close run* completes it;
+  completed runs, including `autoFinish` runs, cannot be reopened.
+- *Go back to implementation*: runs implement → review → summarize again, in the
+  same run, on top of the existing uncommitted changes.
+- *Go back to planning*: re-plans first (with the previous plan and reviews as
+  inputs), asks for plan approval again unless `autoApprovePlan`, then implements.
+- Rerun either reviewer or both, rerun synthesis only, or attach verification
+  evidence and recompute the decision gate and synthesis without rerunning reviews.
+- Reopen a parked run with a new prompt and a restart point: planning,
+  implementation, both reviews, or synthesis.
+
+Instructions typed for the next pass are saved in the protected `feedback.json`
+(`{ "entries": [{ "iteration", "source", "action", "feedback" }] }`, with `source`
+`plan-approval` or `post-review`). Later agents are told to apply it, but it
+cannot authorize forbidden actions such as committing or pushing, and the
+requirement-coverage reviewer verifies that each requested change was made.
+Acceptance criteria remain cumulative across passes. The final report gains an
+`Iteration: n` line and a **Human feedback** section.
+
+When a pass is repeated, its artifacts (`implementation.json`, `changes.patch`,
+`untracked-files.json`, `review-snapshot.json`, both reviews, `decision-gate.json`,
+`summary.json`, `report.md`, `result.json`, and `plan.json` when re-planning) move to
+`iterations/<n>/`; the top-level files always describe the latest pass, and
+`result.json` carries its `iteration`. Later passes use suffixed step keys and agent
+labels (`2-implement #2`, `3-requirement-coverage #2`, ...). The dashboard shows the
+latest pass and browses earlier iterations and reruns, including plan versions.
+
+While paused at a decision, source edits are reconciled as manual edits, saved in
+`manual-edits-*.patch`, included in the run's `changes.patch`, and sent through
+review. Branch, HEAD, or staged-index changes halt reconciliation. Declining to
+approve a later plan keeps earlier passes' changes in the checkout and says so in
+the result.
 
 Resume uses durable step outputs and agent memoization; completed agents are not
-restarted. Switching input modes or changing task requirements on resume is
-rejected; start a new run for a different task. A branch, HEAD, source, index, or protected-artifact change detected at
-a stage boundary stops the run instead of reviewing stale content. A crash after
-source edits but before the implementation checkpoint may require a new run after
-manual reconciliation. Do not clear journals or undo source changes blindly.
+restarted. Inbox responses and prompt answers are journaled, so a resumed run
+does not ask again for decisions it already has. Switching input modes or
+changing task requirements on resume is rejected; start a new run for a
+different task. Protected-artifact changes still stop the run rather than
+reviewing stale content. Do not clear journals or undo source changes blindly.
 
 Read-only boundaries are agent instructions plus before/after fingerprints, not
 an OS sandbox or an exclusive repository lock. Ignored build output is outside
@@ -93,15 +184,17 @@ The same bundled extension also declares the **Implementation flow runs** canvas
 (`implementation-flow-runs`). After reloading the extension provider with
 `extensions_reload` (or restarting the Copilot session), ask Copilot to
 **"Open the implementation-flow dashboard."** The canvas takes an empty input object.
-It does not start a delivery run or require a clean checkout just to inspect
-existing artifacts.
+It does not start a delivery run just to inspect existing artifacts.
 
 The dashboard uses plain HTML, CSS, and JavaScript with no framework, build
 step, CDN, or additional package installation. Its extension-owned HTTP server
 binds only to `127.0.0.1` on an ephemeral port with a private per-panel URL.
 Closing the panel stops that panel's server; closing the session also stops
-the observer. The only canvas action, `list_runs`, reads recorded run summaries.
-There are no start, resume, pause, cancel, edit, or delete controls.
+the observer. The dashboard lists runs and exposes confirmed workflow controls
+for starting, pausing, resuming, cancelling, and responding to decisions. It
+supports plan editing, inline feedback, verification evidence, iteration
+browsing, and plan comparison. Mutations use same-origin and capability checks;
+the dashboard does not expose arbitrary file writes or command execution.
 
 Select a run to see its issue-or-task/branch identity, recorded runtime state and
 delivery recommendation. The connected **Prepare → Plan → Implement → Review →
@@ -159,11 +252,13 @@ layouts:
   evidence.
 
 There is no standalone **New files** panel in Implement. Its original manifest
-remains under **Run-level & other files** and contributes new-file statuses.
-The recorded patch contains tracked-file changes only: the manifest stores
-paths and hashes, **not new-file contents**. The dashboard does not read the
-current checkout to manufacture a historical new-file diff. Missing or
-unsupported evidence produces an explicit unavailable status or notice.
+remains under **Run-level & other files**. The recorded patch includes the run's
+new files, so file statuses come from the patch first. Runs from before version
+1.1.0 recorded tracked-file changes only. For them, the manifest supplies "added"
+statuses for paths and hashes, but **not new-file contents**, and a notice says
+so. The dashboard does not read the current checkout to manufacture a historical
+new-file diff. Missing or unsupported evidence produces an explicit unavailable
+status or notice.
 Related patch/manifest changes refresh file statuses even when the primary
 implementation output is unchanged.
 
@@ -209,7 +304,7 @@ are defined by the schemas and save sites in `workflow.mjs`:
 
 | Artifact | Main fields / shape |
 |---|---|
-| `context.json` | Run, repository, checkout, branch, starting revision and requirement digest |
+| `context.json` | Run, repository, checkout, branch, starting revision, starting worktree tree (`baseTree`), `preexistingChanges` and requirement digest |
 | `issue.json` | Number, title, nullable body, URL, update timestamp and comments |
 | `task.json` | Supplied task title and description |
 | `plan.json` | Status, goal, scope, acceptance criteria, steps, mitigations, rollback, validation requirement and blockers |
@@ -217,9 +312,14 @@ are defined by the schemas and save sites in `workflow.mjs`:
 | Both `*-review.json` files | `available`, nullable `output`; output holds verdict, summary, coverage, findings, checks and criteria |
 | `decision-gate.json` | Maximum recommendation, failures and uncertainties |
 | `summary.json` | Recommendation, summary, rationale, finding dispositions, remaining risks and next steps |
-| `result.json` | Full delivery result, or a smaller blocked-planning result with `stage`, `blockers`, `recommendation` and artifact path |
-| `review-snapshot.json` | Branch, revision, fingerprint, changed files and review instructions |
-| `untracked-files.json` | Array of entries with path, mode, SHA-256 and symlink flag |
+| `result.json` | Full delivery result (with its `iteration`), or a smaller blocked-planning/stopped result with `stage`, `iteration`, `blockers`, `recommendation` and artifact path |
+| `feedback.json` | `entries` of human feedback: iteration, source, action and text |
+| `pending-decision.json` | Durable pending decision and allowed actions |
+| `verification.json` | Later verification evidence attached to a parked run |
+| `issue-delta.json` | New or edited issue title, body, or comment snapshot |
+| `review-snapshot.json` | Branch, revision, starting and reviewed trees, fingerprint, changed files, pre-existing changes and review instructions |
+| `changes.patch` | Binary-safe diff of everything this run changed (including new files) relative to the starting worktree |
+| `untracked-files.json` | Array of the run's new or changed untracked files with path, mode, SHA-256 and symlink flag |
 | `dashboard.json` | Versioned runtime observations, separate from delivery artifacts |
 
 These are per-artifact shapes, not a forever-stable universal schema. Existing
@@ -255,5 +355,5 @@ output and synthesis layouts, diff parsing/line numbers, file statuses,
 related-artifact refresh and run-switch races, schema variants, legacy/partial runs,
 cross-session snapshots, stale progress, observer failures, history pagination,
 resume and lifecycle handling, phase order/dependencies, artifact ownership,
-the five phase colors, incomplete outputs, read-only endpoints, and rendering
+the five phase colors, incomplete outputs, mutation endpoint protections, and rendering
 boundaries.

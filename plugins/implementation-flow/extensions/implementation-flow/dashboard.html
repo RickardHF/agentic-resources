@@ -32,8 +32,9 @@ FORM: User-directed workflow inspector, not an analytics dashboard. Review expos
       <p id="empty" class="empty" role="status">Loading recorded runs...</p>
       <div id="run-detail" hidden>
         <section id="overview" aria-label="Run overview"></section>
+        <section id="run-controls" class="control-panel" aria-label="Workflow controls"></section>
         <section class="workflow-section" aria-labelledby="phase-heading">
-          <div class="section-heading"><h2 id="phase-heading">Delivery path</h2><span class="read-only">Read-only</span></div>
+          <div class="section-heading"><h2 id="phase-heading">Delivery path</h2><span class="read-only">Workflow status</span></div>
           <div class="path-scroll"><div id="phases" class="phases" role="tablist" aria-label="Workflow phases"></div></div>
           <div class="path-footer"><p id="phase-note" class="muted"></p><ul class="state-legend" aria-label="Phase status colors">
             <li data-color="green">Completed</li><li data-color="gray">Not started / skipped</li><li data-color="red">Error</li><li data-color="blue">In progress</li><li data-color="yellow">Closed unfinished</li>
